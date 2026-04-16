@@ -1,0 +1,38 @@
+{
+  "name": "pullvault",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "tsx watch server.ts",
+    "build": "next build",
+    "start": "tsx server.ts",
+    "typecheck": "tsc --noEmit && tsc --project tsconfig.server.json --noEmit",
+    "verify:connections": "tsx scripts/verify-connections.ts",
+    "check": "npm run typecheck"
+  },
+  "dependencies": {
+    "decimal.js": "^10.4.3",
+    "express": "^4.21.2",
+    "ioredis": "^5.4.1",
+    "next": "^14.2.0",
+    "pg": "^8.13.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.17.15",
+    "@types/pg": "^8.11.10",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.5.1",
+    "tailwindcss": "^3.4.17",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
