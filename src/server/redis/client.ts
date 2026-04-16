@@ -13,11 +13,18 @@ if (!redisBaseUrl) {
 }
 
 function createRedisConnection(url: string): Redis {
-  return new Redis(url, {
+  const client = new Redis(url, {
     maxRetriesPerRequest: 2,
     enableReadyCheck: true,
     lazyConnect: false
   });
+
+  // Prevent noisy unhandled error-event warnings when Redis is unreachable.
+  client.on("error", (error) => {
+    console.warn(`[redis] ${error.message}`);
+  });
+
+  return client;
 }
 
 const pubUrl = process.env.REDIS_PUB_URL || redisBaseUrl;
@@ -25,6 +32,16 @@ const subUrl = process.env.REDIS_SUB_URL || redisBaseUrl;
 
 const redisClient = pubUrl ? createRedisConnection(pubUrl) : null;
 const redisSubscriber = subUrl ? createRedisConnection(subUrl) : null;
+const redisAdapterPubClient = pubUrl ? createRedisConnection(pubUrl) : null;
+const redisAdapterSubClient = subUrl ? createRedisConnection(subUrl) : null;
+
+export function canUseRedisPubSub(): boolean {
+  return Boolean(redisClient && redisSubscriber);
+}
+
+export function canUseRedisAdapterPubSub(): boolean {
+  return Boolean(redisAdapterPubClient && redisAdapterSubClient);
+}
 
 export function getRedisClient(): Redis {
   if (!redisClient) {
@@ -40,6 +57,24 @@ export function getRedisSubscriber(): Redis {
   }
 
   return redisSubscriber;
+}
+
+export function getRedisPubSubClients(): { pubClient: Redis; subClient: Redis } {
+  return {
+    pubClient: getRedisClient(),
+    subClient: getRedisSubscriber()
+  };
+}
+
+export function getRedisAdapterPubSubClients(): { pubClient: Redis; subClient: Redis } {
+  if (!redisAdapterPubClient || !redisAdapterSubClient) {
+    throw new Error("Redis adapter pub/sub is not configured. Set REDIS_URL.");
+  }
+
+  return {
+    pubClient: redisAdapterPubClient,
+    subClient: redisAdapterSubClient
+  };
 }
 
 export async function pingRedis(): Promise<string> {
@@ -101,6 +136,14 @@ export async function closeRedisClients(): Promise<void> {
 
   if (redisClient) {
     closeOps.push(redisClient.quit());
+  }
+
+  if (redisAdapterSubClient) {
+    closeOps.push(redisAdapterSubClient.quit());
+  }
+
+  if (redisAdapterPubClient) {
+    closeOps.push(redisAdapterPubClient.quit());
   }
 
   await Promise.allSettled(closeOps);

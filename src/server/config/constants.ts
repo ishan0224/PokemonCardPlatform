@@ -1,7 +1,5 @@
 import type { PackTier } from "../../lib/types";
 
-export const STARTING_BALANCE_CENTS = 10_000;
-
 export const PACK_PRICE_CENTS: Record<PackTier, number> = {
   standard: 500,
   premium: 2_000,
@@ -32,5 +30,6 @@ export const RATE_LIMITS = {
   packPurchase: { limit: 5, windowSeconds: 10 },
   placeBid: { limit: 10, windowSeconds: 10 },
   buyListing: { limit: 5, windowSeconds: 10 },
+  register: { limit: 5, windowSeconds: 5 * 60 },
   login: { limit: 5, windowSeconds: 5 * 60 }
 } as const;
