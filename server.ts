@@ -18,7 +18,6 @@ async function bootstrap(): Promise<void> {
   await nextApp.prepare();
 
   const app = express();
-  app.use(express.json({ limit: "1mb" }));
 
   app.get("/healthz", (_req, res) => {
     res.status(200).json({ status: "ok" });
