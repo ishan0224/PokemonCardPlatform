@@ -1,4 +1,5 @@
 import Redis from "ioredis";
+import type { PackTier } from "../../lib/types";
 
 type RateLimitResult = {
   allowed: boolean;
@@ -16,7 +17,8 @@ function createRedisConnection(url: string): Redis {
   const client = new Redis(url, {
     maxRetriesPerRequest: 2,
     enableReadyCheck: true,
-    lazyConnect: false
+    // Prevent eager network dials at module import time (important for build/test environments).
+    lazyConnect: true
   });
 
   // Prevent noisy unhandled error-event warnings when Redis is unreachable.
@@ -41,6 +43,10 @@ export function canUseRedisPubSub(): boolean {
 
 export function canUseRedisAdapterPubSub(): boolean {
   return Boolean(redisAdapterPubClient && redisAdapterSubClient);
+}
+
+export function isRedisConfigured(): boolean {
+  return Boolean(redisClient);
 }
 
 export function getRedisClient(): Redis {
@@ -125,6 +131,33 @@ export async function slidingWindowRateLimit(
     remaining: Math.max(limit - currentCount, 0),
     resetMs: windowMs
   };
+}
+
+function dropInventoryKey(dropId: string, tier: PackTier): string {
+  return `drop:${dropId}:${tier}:remaining`;
+}
+
+export async function getDropInventoryCache(dropId: string, tier: PackTier): Promise<number | null> {
+  if (!isRedisConfigured()) {
+    return null;
+  }
+
+  const value = await getRedisClient().get(dropInventoryKey(dropId, tier));
+
+  if (value === null) {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(parsed, 0) : null;
+}
+
+export async function setDropInventoryCache(dropId: string, tier: PackTier, remaining: number): Promise<void> {
+  if (!isRedisConfigured()) {
+    return;
+  }
+
+  await getRedisClient().set(dropInventoryKey(dropId, tier), String(Math.max(Math.trunc(remaining), 0)));
 }
 
 export async function closeRedisClients(): Promise<void> {
