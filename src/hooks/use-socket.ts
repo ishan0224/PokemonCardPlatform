@@ -2,8 +2,14 @@
 
 import { useEffect, useRef } from "react";
 import {
+  subscribeToPortfolioRoom,
+  subscribeToAuctionsRoom,
+  subscribeToAuctionRoom,
   subscribeToDropRoom,
   subscribeToMarketplaceRoom,
+  type PortfolioRoomHandlers,
+  type AuctionsRoomHandlers,
+  type AuctionRoomHandlers,
   type DropRoomHandlers,
   type MarketplaceRoomHandlers
 } from "@/lib/socket-client";
@@ -49,4 +55,66 @@ export function useMarketplaceRoom(enabled: boolean, handlers: MarketplaceRoomHa
       onConnected: () => handlersRef.current.onConnected?.()
     });
   }, [enabled]);
+}
+
+export function useAuctionRoom(auctionId: string | null, handlers: AuctionRoomHandlers): void {
+  const handlersRef = useRef<AuctionRoomHandlers>(handlers);
+
+  useEffect(() => {
+    handlersRef.current = handlers;
+  }, [handlers]);
+
+  useEffect(() => {
+    if (!auctionId) {
+      return;
+    }
+
+    return subscribeToAuctionRoom(auctionId, {
+      onNewBid: (event) => handlersRef.current.onNewBid?.(event),
+      onTimeExtended: (event) => handlersRef.current.onTimeExtended?.(event),
+      onAuctionEnded: (event) => handlersRef.current.onAuctionEnded?.(event),
+      onWatcherCount: (event) => handlersRef.current.onWatcherCount?.(event),
+      onConnected: () => handlersRef.current.onConnected?.()
+    });
+  }, [auctionId]);
+}
+
+export function useAuctionsRoom(enabled: boolean, handlers: AuctionsRoomHandlers): void {
+  const handlersRef = useRef<AuctionsRoomHandlers>(handlers);
+
+  useEffect(() => {
+    handlersRef.current = handlers;
+  }, [handlers]);
+
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
+    return subscribeToAuctionsRoom({
+      onAuctionCreated: (event) => handlersRef.current.onAuctionCreated?.(event),
+      onAuctionUpdated: (event) => handlersRef.current.onAuctionUpdated?.(event),
+      onAuctionEnded: (event) => handlersRef.current.onAuctionEnded?.(event),
+      onConnected: () => handlersRef.current.onConnected?.()
+    });
+  }, [enabled]);
+}
+
+export function usePortfolioRoom(userId: string | null, handlers: PortfolioRoomHandlers): void {
+  const handlersRef = useRef<PortfolioRoomHandlers>(handlers);
+
+  useEffect(() => {
+    handlersRef.current = handlers;
+  }, [handlers]);
+
+  useEffect(() => {
+    if (!userId) {
+      return;
+    }
+
+    return subscribeToPortfolioRoom(userId, {
+      onBalanceUpdate: (event) => handlersRef.current.onBalanceUpdate?.(event),
+      onConnected: () => handlersRef.current.onConnected?.()
+    });
+  }, [userId]);
 }

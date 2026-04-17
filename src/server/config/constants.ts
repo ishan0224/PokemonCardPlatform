@@ -27,6 +27,8 @@ export const PRICE_POLLER_INTERVAL_MS = 5 * 60 * 1000;
 export const AUCTION_CLOSER_INTERVAL_MS = 5 * 1000;
 export const DROP_SCHEDULER_INTERVAL_MS = 10 * 1000;
 export const MARKETPLACE_EVENTS_CHANNEL = "marketplace_events";
+export const AUCTION_EVENTS_CHANNEL = "auction_events";
+export const BALANCE_EVENTS_CHANNEL = "balance_events";
 
 export const RATE_LIMITS = {
   packPurchase: { limit: 5, windowSeconds: 10 },
