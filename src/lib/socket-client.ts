@@ -13,11 +13,28 @@ export type DropLifecycleEvent = {
   dropId: string;
 };
 
+export type MarketplaceListingEvent = {
+  listingId: string;
+  cardId: string;
+  sellerId: string;
+  buyerId?: string | null;
+  price?: number;
+  createdAt?: string;
+  soldAt?: string | null;
+};
+
 export type DropRoomHandlers = {
   onInventoryUpdate?: (event: DropInventoryUpdateEvent) => void;
   onSoldOut?: (event: DropInventoryUpdateEvent) => void;
   onDropStarted?: (event: DropLifecycleEvent) => void;
   onDropCompleted?: (event: DropLifecycleEvent) => void;
+  onConnected?: () => void;
+};
+
+export type MarketplaceRoomHandlers = {
+  onListingCreated?: (event: MarketplaceListingEvent) => void;
+  onListingSold?: (event: MarketplaceListingEvent) => void;
+  onListingCancelled?: (event: MarketplaceListingEvent) => void;
   onConnected?: () => void;
 };
 
@@ -34,6 +51,10 @@ function getSocketUrl(): string {
 
 function dropRoomName(dropId: string): string {
   return `drop:${dropId}`;
+}
+
+function marketplaceRoomName(): string {
+  return "marketplace";
 }
 
 function getSocket(): Socket {
@@ -102,6 +123,53 @@ export function subscribeToDropRoom(dropId: string, handlers: DropRoomHandlers):
     socket.off("sold_out", onSoldOut);
     socket.off("drop_started", onDropStarted);
     socket.off("drop_completed", onDropCompleted);
+    socket.emit("leave-room", room);
+
+    if (activeSubscriptions === 0 && socket.connected) {
+      socket.disconnect();
+    }
+  };
+}
+
+export function subscribeToMarketplaceRoom(handlers: MarketplaceRoomHandlers): () => void {
+  const socket = getSocket();
+  const room = marketplaceRoomName();
+
+  const onListingCreated = (event: MarketplaceListingEvent): void => {
+    handlers.onListingCreated?.(event);
+  };
+
+  const onListingSold = (event: MarketplaceListingEvent): void => {
+    handlers.onListingSold?.(event);
+  };
+
+  const onListingCancelled = (event: MarketplaceListingEvent): void => {
+    handlers.onListingCancelled?.(event);
+  };
+
+  const onConnected = (): void => {
+    handlers.onConnected?.();
+    socket.emit("join-room", room);
+  };
+
+  if (!socket.connected) {
+    socket.connect();
+  }
+
+  activeSubscriptions += 1;
+  socket.emit("join-room", room);
+  socket.on("connect", onConnected);
+  socket.on("new_listing", onListingCreated);
+  socket.on("listing_sold", onListingSold);
+  socket.on("listing_cancelled", onListingCancelled);
+
+  return () => {
+    activeSubscriptions = Math.max(activeSubscriptions - 1, 0);
+
+    socket.off("connect", onConnected);
+    socket.off("new_listing", onListingCreated);
+    socket.off("listing_sold", onListingSold);
+    socket.off("listing_cancelled", onListingCancelled);
     socket.emit("leave-room", room);
 
     if (activeSubscriptions === 0 && socket.connected) {

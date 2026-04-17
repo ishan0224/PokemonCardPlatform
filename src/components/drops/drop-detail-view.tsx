@@ -23,7 +23,7 @@ export function DropDetailView({ dropId }: { dropId: string }): JSX.Element {
     clearPurchaseResult,
     purchaseTier,
     refresh
-  } = useDrop(dropId, Boolean(user));
+  } = useDrop(dropId);
   const countdown = useCountdown(drop?.scheduledAt ?? new Date().toISOString());
 
   const onPurchase = async (tier: PackTier): Promise<void> => {

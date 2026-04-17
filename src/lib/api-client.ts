@@ -1,4 +1,4 @@
-import type { CardState, DropStatus, PackTier, RarityTier } from "./types";
+import type { CardState, DropStatus, ListingStatus, PackTier, RarityTier } from "./types";
 
 export type ApiUser = {
   id: string;
@@ -60,6 +60,75 @@ export type PackCard = {
 
 export type PackDetail = PackSummary & {
   cards: PackCard[] | null;
+};
+
+export type CollectionSort = "newest" | "value_desc" | "value_asc" | "pnl_desc" | "pnl_asc";
+export type MarketplaceSort = "newest" | "price_asc" | "price_desc";
+
+export type CollectionCard = {
+  id: string;
+  ownerId: string;
+  slotNumber: number;
+  state: CardState;
+  acquisitionPrice: number;
+  currentPrice: number;
+  pnl: number;
+  createdAt: string;
+  activeListing: {
+    id: string;
+    price: number;
+  } | null;
+  pokemonCard: {
+    id: string;
+    tcgId: string;
+    name: string;
+    setName: string;
+    rarity: string;
+    rarityTier: RarityTier;
+    imageUrl: string | null;
+    imageUrlHires: string | null;
+  };
+};
+
+export type CollectionPortfolio = {
+  totalCards: number;
+  totalAcquisitionValue: number;
+  totalMarketValue: number;
+  totalPnl: number;
+  byRarity: Array<{
+    rarityTier: RarityTier;
+    count: number;
+    marketValue: number;
+  }>;
+};
+
+export type MarketplaceListing = {
+  id: string;
+  cardId: string;
+  sellerId: string;
+  sellerUsername: string;
+  buyerId: string | null;
+  price: number;
+  status: ListingStatus;
+  createdAt: string;
+  soldAt: string | null;
+  card: {
+    id: string;
+    slotNumber: number;
+    rarityTier: RarityTier;
+    acquisitionPrice: number;
+    pokemonCard: {
+      id: string;
+      tcgId: string;
+      name: string;
+      setName: string;
+      rarity: string;
+      rarityTier: RarityTier;
+      imageUrl: string | null;
+      imageUrlHires: string | null;
+      currentPrice: number;
+    };
+  };
 };
 
 export type OpenPackResult = {
@@ -184,6 +253,19 @@ export function mapApiErrorToMessage(error: unknown): string {
         return "The requested item was not found.";
       case "UNAUTHORIZED":
         return "Please log in to continue.";
+      case "LISTING_NOT_ACTIVE":
+        return "Listing is no longer active.";
+      case "LISTING_ALREADY_ACTIVE":
+        return "This card already has an active listing.";
+      case "CARD_NOT_LISTABLE":
+        return "This card cannot be listed right now.";
+      case "NOT_CARD_OWNER":
+      case "LISTING_FORBIDDEN":
+        return "You are not allowed to perform this listing action.";
+      case "INVALID_LISTING_PRICE":
+        return "Listing price is invalid.";
+      case "SELF_PURCHASE_NOT_ALLOWED":
+        return "You cannot buy your own listing.";
       case "REQUEST_ABORTED":
         return "";
       default:
@@ -257,6 +339,100 @@ export const apiClient = {
   revealPackCard(packId: string, slotNumber: number, signal?: AbortSignal): Promise<{ card: PackCard }> {
     return requestJson(`/api/packs/${packId}/cards/${slotNumber}`, {
       method: "GET",
+      signal
+    });
+  },
+
+  listCollection(
+    input: {
+      rarity?: RarityTier | null;
+      state?: CardState | null;
+      sort?: CollectionSort;
+      page?: number;
+      limit?: number;
+    } = {},
+    signal?: AbortSignal
+  ): Promise<{ cards: CollectionCard[]; page: number; limit: number; total: number }> {
+    const params = new URLSearchParams();
+
+    if (input.rarity) {
+      params.set("rarity", input.rarity);
+    }
+    if (input.state) {
+      params.set("state", input.state);
+    }
+    if (input.sort) {
+      params.set("sort", input.sort);
+    }
+    if (input.page) {
+      params.set("page", String(input.page));
+    }
+    if (input.limit) {
+      params.set("limit", String(input.limit));
+    }
+
+    const query = params.toString();
+    return requestJson(`/api/collection${query ? `?${query}` : ""}`, { method: "GET", signal });
+  },
+
+  getCollectionPortfolio(signal?: AbortSignal): Promise<{ portfolio: CollectionPortfolio }> {
+    return requestJson("/api/collection/portfolio", { method: "GET", signal });
+  },
+
+  listMarketplaceListings(
+    input: {
+      rarity?: RarityTier | null;
+      sort?: MarketplaceSort;
+      page?: number;
+      limit?: number;
+    } = {},
+    signal?: AbortSignal
+  ): Promise<{ listings: MarketplaceListing[]; page: number; limit: number; total: number }> {
+    const params = new URLSearchParams();
+
+    if (input.rarity) {
+      params.set("rarity", input.rarity);
+    }
+    if (input.sort) {
+      params.set("sort", input.sort);
+    }
+    if (input.page) {
+      params.set("page", String(input.page));
+    }
+    if (input.limit) {
+      params.set("limit", String(input.limit));
+    }
+
+    const query = params.toString();
+    return requestJson(`/api/marketplace/listings${query ? `?${query}` : ""}`, { method: "GET", signal });
+  },
+
+  createListing(input: { cardId: string; price: number }, signal?: AbortSignal): Promise<{ listing: MarketplaceListing }> {
+    return requestJson("/api/marketplace/listings", {
+      method: "POST",
+      body: JSON.stringify(input),
+      signal
+    });
+  },
+
+  cancelListing(listingId: string, signal?: AbortSignal): Promise<{ listing: MarketplaceListing }> {
+    return requestJson(`/api/marketplace/listings/${listingId}`, {
+      method: "DELETE",
+      signal
+    });
+  },
+
+  buyListing(
+    listingId: string,
+    signal?: AbortSignal
+  ): Promise<{
+    listing: MarketplaceListing;
+    feeCharged: number;
+    buyerNewBalance: number;
+    sellerNewBalance: number;
+  }> {
+    return requestJson(`/api/marketplace/listings/${listingId}/buy`, {
+      method: "POST",
       signal
     });
   }
