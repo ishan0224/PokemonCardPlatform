@@ -51,6 +51,23 @@ export function getClientIp(request: NextRequest): string {
   return realIp || "unknown";
 }
 
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function requireUuid(value: string | undefined | null, fieldName: string): string {
+  const normalized = value?.trim();
+
+  if (!normalized) {
+    throw new ApiRouteError(`${fieldName} is required.`, 400, "INVALID_UUID", { field: fieldName });
+  }
+
+  if (!UUID_REGEX.test(normalized)) {
+    throw new ApiRouteError(`${fieldName} must be a valid UUID.`, 400, "INVALID_UUID", { field: fieldName });
+  }
+
+  return normalized;
+}
+
 export function handleRouteError(error: unknown): NextResponse {
   if (error instanceof ApiRouteError) {
     return jsonError(
