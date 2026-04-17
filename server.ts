@@ -1,3 +1,4 @@
+import { loadEnvConfig } from "@next/env";
 import http from "http";
 import express from "express";
 import next from "next";
@@ -7,6 +8,8 @@ import { startDropScheduler } from "./src/server/jobs/drop-scheduler";
 import { startPricePoller, type JobStopper } from "./src/server/jobs/price-poller";
 import { closeDatabasePool } from "./src/server/db/pool";
 import { closeRedisClients } from "./src/server/redis/client";
+
+loadEnvConfig(process.cwd());
 
 const port = Number(process.env.PORT ?? 3000);
 const dev = process.env.NODE_ENV !== "production";

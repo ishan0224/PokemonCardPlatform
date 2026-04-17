@@ -7,11 +7,12 @@ type RateLimitResult = {
   resetMs: number;
 };
 
-const redisBaseUrl = process.env.REDIS_URL;
-
-if (!redisBaseUrl) {
-  console.warn("REDIS_URL is not configured. Redis operations will fail until it is set.");
-}
+let redisClient: Redis | null = null;
+let redisSubscriber: Redis | null = null;
+let redisAdapterPubClient: Redis | null = null;
+let redisAdapterSubClient: Redis | null = null;
+let redisInitialized = false;
+let missingRedisConfigWarned = false;
 
 function createRedisConnection(url: string): Redis {
   const client = new Redis(url, {
@@ -29,37 +30,61 @@ function createRedisConnection(url: string): Redis {
   return client;
 }
 
-const pubUrl = process.env.REDIS_PUB_URL || redisBaseUrl;
-const subUrl = process.env.REDIS_SUB_URL || redisBaseUrl;
+function resolveRedisUrls(): { baseUrl: string | null; pubUrl: string | null; subUrl: string | null } {
+  const baseUrl = process.env.REDIS_URL ?? null;
+  const pubUrl = process.env.REDIS_PUB_URL ?? baseUrl;
+  const subUrl = process.env.REDIS_SUB_URL ?? baseUrl;
 
-const redisClient = pubUrl ? createRedisConnection(pubUrl) : null;
-const redisSubscriber = subUrl ? createRedisConnection(subUrl) : null;
-const redisAdapterPubClient = pubUrl ? createRedisConnection(pubUrl) : null;
-const redisAdapterSubClient = subUrl ? createRedisConnection(subUrl) : null;
+  return { baseUrl, pubUrl, subUrl };
+}
+
+function initializeRedisClients(): void {
+  if (redisInitialized) {
+    return;
+  }
+
+  redisInitialized = true;
+  const { baseUrl, pubUrl, subUrl } = resolveRedisUrls();
+
+  if (!baseUrl && !pubUrl && !subUrl && !missingRedisConfigWarned) {
+    console.warn("REDIS_URL is not configured. Redis operations will fail until it is set.");
+    missingRedisConfigWarned = true;
+  }
+
+  redisClient = pubUrl ? createRedisConnection(pubUrl) : null;
+  redisSubscriber = subUrl ? createRedisConnection(subUrl) : null;
+  redisAdapterPubClient = pubUrl ? createRedisConnection(pubUrl) : null;
+  redisAdapterSubClient = subUrl ? createRedisConnection(subUrl) : null;
+}
 
 export function canUseRedisPubSub(): boolean {
+  initializeRedisClients();
   return Boolean(redisClient && redisSubscriber);
 }
 
 export function canUseRedisAdapterPubSub(): boolean {
+  initializeRedisClients();
   return Boolean(redisAdapterPubClient && redisAdapterSubClient);
 }
 
 export function isRedisConfigured(): boolean {
+  initializeRedisClients();
   return Boolean(redisClient);
 }
 
 export function getRedisClient(): Redis {
+  initializeRedisClients();
   if (!redisClient) {
-    throw new Error("Redis client is not configured. Set REDIS_URL.");
+    throw new Error("Redis client is not configured. Set REDIS_URL or REDIS_PUB_URL.");
   }
 
   return redisClient;
 }
 
 export function getRedisSubscriber(): Redis {
+  initializeRedisClients();
   if (!redisSubscriber) {
-    throw new Error("Redis subscriber is not configured. Set REDIS_URL.");
+    throw new Error("Redis subscriber is not configured. Set REDIS_URL or REDIS_SUB_URL.");
   }
 
   return redisSubscriber;
@@ -73,8 +98,9 @@ export function getRedisPubSubClients(): { pubClient: Redis; subClient: Redis } 
 }
 
 export function getRedisAdapterPubSubClients(): { pubClient: Redis; subClient: Redis } {
+  initializeRedisClients();
   if (!redisAdapterPubClient || !redisAdapterSubClient) {
-    throw new Error("Redis adapter pub/sub is not configured. Set REDIS_URL.");
+    throw new Error("Redis adapter pub/sub is not configured. Set REDIS_URL or REDIS_PUB_URL/REDIS_SUB_URL.");
   }
 
   return {
@@ -161,6 +187,7 @@ export async function setDropInventoryCache(dropId: string, tier: PackTier, rema
 }
 
 export async function closeRedisClients(): Promise<void> {
+  initializeRedisClients();
   const closeOps: Promise<unknown>[] = [];
 
   if (redisSubscriber) {
@@ -180,4 +207,10 @@ export async function closeRedisClients(): Promise<void> {
   }
 
   await Promise.allSettled(closeOps);
+
+  redisClient = null;
+  redisSubscriber = null;
+  redisAdapterPubClient = null;
+  redisAdapterSubClient = null;
+  redisInitialized = false;
 }
