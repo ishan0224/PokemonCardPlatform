@@ -1,29 +1,42 @@
 import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from "pg";
 
-const databaseUrl = process.env.DATABASE_URL;
+let pool: Pool | null = null;
+let missingDatabaseUrlWarned = false;
 
-if (!databaseUrl) {
-  console.warn("DATABASE_URL is not configured. Database operations will fail until it is set.");
+function resolveDatabaseConfig(): { databaseUrl: string | null; sslEnabled: boolean } {
+  return {
+    databaseUrl: process.env.DATABASE_URL ?? null,
+    sslEnabled: process.env.DATABASE_SSL === "true"
+  };
 }
 
-const sslEnabled = process.env.DATABASE_SSL === "true";
+function getOrCreatePool(): Pool {
+  if (pool) {
+    return pool;
+  }
 
-export const pool = databaseUrl
-  ? new Pool({
-      connectionString: databaseUrl,
-      ssl: sslEnabled ? { rejectUnauthorized: false } : undefined,
-      max: 20,
-      idleTimeoutMillis: 10_000,
-      connectionTimeoutMillis: 5_000
-    })
-  : null;
-
-function getPool(): Pool {
-  if (!pool) {
+  const { databaseUrl, sslEnabled } = resolveDatabaseConfig();
+  if (!databaseUrl) {
+    if (!missingDatabaseUrlWarned) {
+      console.warn("DATABASE_URL is not configured. Database operations will fail until it is set.");
+      missingDatabaseUrlWarned = true;
+    }
     throw new Error("DATABASE_URL is not configured.");
   }
 
+  pool = new Pool({
+    connectionString: databaseUrl,
+    ssl: sslEnabled ? { rejectUnauthorized: false } : undefined,
+    max: 20,
+    idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 5_000
+  });
+
   return pool;
+}
+
+function getPool(): Pool {
+  return getOrCreatePool();
 }
 
 export async function query<T extends QueryResultRow = QueryResultRow>(
@@ -57,5 +70,6 @@ export async function pingDatabase(): Promise<boolean> {
 export async function closeDatabasePool(): Promise<void> {
   if (pool) {
     await pool.end();
+    pool = null;
   }
 }

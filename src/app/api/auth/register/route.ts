@@ -14,6 +14,11 @@ type RegisterBody = {
   password: string;
 };
 
+type AuthProviderError = {
+  message: string;
+  status?: number;
+};
+
 function validateRegisterBody(payload: RegisterBody): RegisterBody {
   if (!payload || typeof payload !== "object") {
     throw new ApiRouteError("Body is required.", 400, "INVALID_BODY");
@@ -38,12 +43,25 @@ function validateRegisterBody(payload: RegisterBody): RegisterBody {
   return { username, email, password };
 }
 
+function mapRegisterProviderError(error: AuthProviderError): ApiRouteError {
+  const normalizedMessage = error.message.toLowerCase();
+  const isRateLimited = error.status === 429 || normalizedMessage.includes("rate limit");
+
+  if (isRateLimited) {
+    return new ApiRouteError("Registration rate limit reached. Please retry shortly.", 429, "AUTH_RATE_LIMITED");
+  }
+
+  return new ApiRouteError(error.message, 400, "AUTH_REGISTER_FAILED");
+}
+
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    await enforceRateLimit({
-      key: `auth:register:${getClientIp(request)}`,
-      ...RATE_LIMITS.register
-    });
+    if (process.env.NODE_ENV === "production") {
+      await enforceRateLimit({
+        key: `auth:register:${getClientIp(request)}`,
+        ...RATE_LIMITS.register
+      });
+    }
 
     const body = validateRegisterBody(await readJsonBody<RegisterBody>(request));
 
@@ -59,7 +77,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
 
     if (error) {
-      throw new ApiRouteError(error.message, 400, "AUTH_REGISTER_FAILED");
+      throw mapRegisterProviderError({
+        message: error.message,
+        status: (error as { status?: number }).status
+      });
     }
 
     if (!data.user) {
