@@ -41,6 +41,8 @@ export function SiteHeader(): JSX.Element {
           </Link>
           <nav className="hidden items-center gap-1 md:flex">
             <NavLink href="/drops" label="Drops" />
+            <NavLink href="/collection" label="Collection" />
+            <NavLink href="/marketplace" label="Marketplace" />
           </nav>
         </div>
 

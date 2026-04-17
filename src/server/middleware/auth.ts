@@ -78,16 +78,7 @@ export async function authenticateSocket(
   next: (error?: Error) => void
 ): Promise<void> {
   try {
-    const authToken =
-      typeof socket.handshake.auth?.token === "string"
-        ? normalizeBearerToken(socket.handshake.auth.token)
-        : null;
-
-    const cookieHeader = socket.handshake.headers.cookie;
-    const parsedCookies = typeof cookieHeader === "string" ? parseCookieHeader(cookieHeader) : {};
-    const cookieToken = parsedCookies[ACCESS_TOKEN_COOKIE];
-
-    const accessToken = authToken || cookieToken;
+    const accessToken = getAccessTokenFromSocketHandshake(socket);
 
     if (!accessToken) {
       return next(new AuthError("Authentication token is missing."));
@@ -101,5 +92,35 @@ export async function authenticateSocket(
     return next();
   } catch (_error) {
     return next(new AuthError("Socket authentication failed."));
+  }
+}
+
+function getAccessTokenFromSocketHandshake(socket: Socket): string | null {
+  const authToken =
+    typeof socket.handshake.auth?.token === "string"
+      ? normalizeBearerToken(socket.handshake.auth.token)
+      : null;
+
+  const cookieHeader = socket.handshake.headers.cookie;
+  const parsedCookies = typeof cookieHeader === "string" ? parseCookieHeader(cookieHeader) : {};
+  const cookieToken = parsedCookies[ACCESS_TOKEN_COOKIE];
+
+  return authToken || cookieToken || null;
+}
+
+export async function authenticateSocketIfPresent(socket: Socket): Promise<void> {
+  const accessToken = getAccessTokenFromSocketHandshake(socket);
+
+  if (!accessToken) {
+    return;
+  }
+
+  try {
+    const user = await validateSupabaseAccessToken(accessToken);
+    socket.data.userId = user.userId;
+    socket.data.email = user.email;
+    socket.data.username = user.username;
+  } catch (_error) {
+    // Invalid tokens are ignored for public-room access.
   }
 }
