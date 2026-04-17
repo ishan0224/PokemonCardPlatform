@@ -7,6 +7,7 @@ import {
 import { canUseRedisPubSub, publish } from "../redis/client";
 import { getIO } from "../websocket/io";
 import { roomNames } from "../websocket/rooms";
+import { calculateFeeFromBps } from "../../lib/decimal";
 import type { ListingStatus, RarityTier } from "../../lib/types";
 
 export type ListingSort = "newest" | "price_asc" | "price_desc";
@@ -152,7 +153,7 @@ function mapListingRow(row: ListingRow): MarketplaceListingView {
 }
 
 function calculateTradingFee(price: number): number {
-  return Math.floor((price * TRADING_FEE_BPS) / 10_000);
+  return calculateFeeFromBps(Math.trunc(price), TRADING_FEE_BPS);
 }
 
 async function emitMarketplaceEventViaSocket(
@@ -570,9 +571,10 @@ export async function buyListing(input: {
     await client.query(
       `UPDATE cards
        SET owner_id = $1,
-           state = 'owned'
-       WHERE id = $2`,
-      [input.buyerId, listing.card_id]
+           state = 'owned',
+           acquisition_price = $2
+       WHERE id = $3`,
+      [input.buyerId, price, listing.card_id]
     );
 
     await client.query(

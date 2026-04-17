@@ -14,6 +14,7 @@ export type DropStatus = "upcoming" | "active" | "completed";
 export type CardState = "in_pack" | "owned" | "listed" | "in_auction";
 export type ListingStatus = "active" | "sold" | "cancelled";
 export type AuctionStatus = "active" | "completed" | "cancelled";
+export type AuctionDurationType = "1h" | "6h" | "24h";
 export type HoldStatus = "active" | "released" | "captured";
 
 export interface ApiError {

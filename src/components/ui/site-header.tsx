@@ -43,6 +43,7 @@ export function SiteHeader(): JSX.Element {
             <NavLink href="/drops" label="Drops" />
             <NavLink href="/collection" label="Collection" />
             <NavLink href="/marketplace" label="Marketplace" />
+            <NavLink href="/auctions" label="Auctions" />
           </nav>
         </div>
 

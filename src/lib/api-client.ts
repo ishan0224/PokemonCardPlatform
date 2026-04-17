@@ -1,4 +1,12 @@
-import type { CardState, DropStatus, ListingStatus, PackTier, RarityTier } from "./types";
+import type {
+  AuctionDurationType,
+  AuctionStatus,
+  CardState,
+  DropStatus,
+  ListingStatus,
+  PackTier,
+  RarityTier
+} from "./types";
 
 export type ApiUser = {
   id: string;
@@ -129,6 +137,55 @@ export type MarketplaceListing = {
       currentPrice: number;
     };
   };
+};
+
+export type AuctionBid = {
+  id: string;
+  auctionId: string;
+  bidderId: string;
+  bidderUsername: string;
+  amount: number;
+  createdAt: string;
+};
+
+export type Auction = {
+  id: string;
+  cardId: string;
+  sellerId: string;
+  sellerUsername: string;
+  startingBid: number;
+  currentBid: number | null;
+  currentBidderId: string | null;
+  currentBidderUsername: string | null;
+  endsAt: string;
+  originalEndTime: string;
+  durationType: AuctionDurationType;
+  status: AuctionStatus;
+  createdAt: string;
+  minNextBid: number;
+  card: {
+    id: string;
+    slotNumber: number;
+    rarityTier: RarityTier;
+    acquisitionPrice: number;
+    ownerId: string;
+    pokemonCard: {
+      id: string;
+      tcgId: string;
+      name: string;
+      setName: string;
+      rarity: string;
+      rarityTier: RarityTier;
+      imageUrl: string | null;
+      imageUrlHires: string | null;
+      currentPrice: number;
+    };
+  };
+};
+
+export type AuctionDetail = Auction & {
+  bids: AuctionBid[];
+  myActiveHold: number | null;
 };
 
 export type OpenPackResult = {
@@ -266,6 +323,27 @@ export function mapApiErrorToMessage(error: unknown): string {
         return "Listing price is invalid.";
       case "SELF_PURCHASE_NOT_ALLOWED":
         return "You cannot buy your own listing.";
+      case "INVALID_STARTING_BID":
+        return "Starting bid is invalid.";
+      case "INVALID_AUCTION_DURATION":
+        return "Auction duration is invalid.";
+      case "CARD_NOT_AUCTIONABLE":
+        return "This card cannot be auctioned right now.";
+      case "AUCTION_ALREADY_ACTIVE":
+        return "This card already has an active auction.";
+      case "AUCTION_NOT_FOUND":
+        return "Auction not found.";
+      case "AUCTION_NOT_ACTIVE":
+      case "AUCTION_ENDED":
+        return "Auction is no longer active.";
+      case "SELF_BID_NOT_ALLOWED":
+        return "You cannot bid on your own auction.";
+      case "ALREADY_HIGHEST_BIDDER":
+        return "You already have the highest bid.";
+      case "BID_TOO_LOW":
+        return "Bid is below the minimum required amount.";
+      case "INVALID_BID_AMOUNT":
+        return "Bid amount is invalid.";
       case "REQUEST_ABORTED":
         return "";
       default:
@@ -433,6 +511,62 @@ export const apiClient = {
   }> {
     return requestJson(`/api/marketplace/listings/${listingId}/buy`, {
       method: "POST",
+      signal
+    });
+  },
+
+  listAuctions(
+    input: {
+      page?: number;
+      limit?: number;
+    } = {},
+    signal?: AbortSignal
+  ): Promise<{ auctions: Auction[]; page: number; limit: number; total: number }> {
+    const params = new URLSearchParams();
+
+    if (input.page) {
+      params.set("page", String(input.page));
+    }
+
+    if (input.limit) {
+      params.set("limit", String(input.limit));
+    }
+
+    const query = params.toString();
+    return requestJson(`/api/auctions${query ? `?${query}` : ""}`, { method: "GET", signal });
+  },
+
+  getAuction(auctionId: string, signal?: AbortSignal): Promise<{ auction: AuctionDetail }> {
+    return requestJson(`/api/auctions/${auctionId}`, { method: "GET", signal });
+  },
+
+  createAuction(
+    input: {
+      cardId: string;
+      startingBid: number;
+      durationType: AuctionDurationType;
+    },
+    signal?: AbortSignal
+  ): Promise<{ auction: AuctionDetail }> {
+    return requestJson("/api/auctions", {
+      method: "POST",
+      body: JSON.stringify(input),
+      signal
+    });
+  },
+
+  placeBid(
+    auctionId: string,
+    amount: number,
+    signal?: AbortSignal
+  ): Promise<{
+    auction: AuctionDetail;
+    bid: AuctionBid;
+    timeExtended: boolean;
+  }> {
+    return requestJson(`/api/auctions/${auctionId}/bid`, {
+      method: "POST",
+      body: JSON.stringify({ amount }),
       signal
     });
   }

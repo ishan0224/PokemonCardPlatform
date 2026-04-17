@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { formatMoneyCents } from "@/lib/format";
+import { formatDollarsInputFromCents, formatMoneyCents, parseDollarsInputToCents } from "@/lib/format";
 import type { CollectionCard as CollectionCardView } from "@/lib/api-client";
 
 type CollectionCardProps = {
@@ -19,7 +19,7 @@ export function CollectionCard({
   onCreateListing,
   onCancelListing
 }: CollectionCardProps): JSX.Element {
-  const [priceInput, setPriceInput] = useState(() => String(Math.max(card.currentPrice, 50)));
+  const [priceInput, setPriceInput] = useState(() => formatDollarsInputFromCents(Math.max(card.currentPrice, 50)));
   const [localError, setLocalError] = useState<string | null>(null);
 
   const pnlLabel = useMemo(() => {
@@ -28,14 +28,14 @@ export function CollectionCard({
   }, [card.pnl]);
 
   const onSubmitListing = async (): Promise<void> => {
-    const parsed = Number(priceInput);
-    if (!Number.isFinite(parsed) || parsed < 50) {
-      setLocalError("Listing price must be at least 50 cents.");
+    const parsed = parseDollarsInputToCents(priceInput);
+    if (parsed === null || parsed < 50) {
+      setLocalError("Listing price must be at least $0.50.");
       return;
     }
 
     setLocalError(null);
-    await onCreateListing(card.id, Math.trunc(parsed));
+    await onCreateListing(card.id, parsed);
   };
 
   return (
@@ -73,16 +73,21 @@ export function CollectionCard({
       {card.state === "owned" ? (
         <div className="mt-4 space-y-2">
           <label htmlFor={`list-price-${card.id}`} className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            List Price (Cents)
+            List Price (USD)
           </label>
           <div className="flex items-center gap-2">
             <input
               id={`list-price-${card.id}`}
               type="number"
-              min={50}
-              step={1}
+              min={0.5}
+              step={0.01}
               value={priceInput}
-              onChange={(event) => setPriceInput(event.target.value)}
+              onChange={(event) => {
+                setPriceInput(event.target.value);
+                if (localError) {
+                  setLocalError(null);
+                }
+              }}
               className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-medium text-slate-900 outline-none ring-0 transition focus:border-slate-500"
             />
             <button

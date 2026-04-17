@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ApiClientError, apiClient } from "@/lib/api-client";
+import { usePortfolioRoom } from "./use-socket";
 
 type AuthState = {
   user: {
@@ -87,6 +88,25 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
       controller.abort();
     };
   }, []);
+
+  usePortfolioRoom(user?.id ?? null, {
+    onBalanceUpdate: (event) => {
+      if (!user || event.userId !== user.id) {
+        return;
+      }
+
+      setBalance({
+        total: event.total,
+        held: event.held,
+        available: event.available
+      });
+    },
+    onConnected: () => {
+      void refreshAuth().catch((error) => {
+        console.error("Failed to refresh auth after portfolio reconnect:", error);
+      });
+    }
+  });
 
   const value = useMemo<AuthState>(
     () => ({

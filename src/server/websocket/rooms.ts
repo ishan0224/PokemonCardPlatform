@@ -1,11 +1,16 @@
 export const roomNames = {
   drop: (dropId: string) => `drop:${dropId}`,
   auction: (auctionId: string) => `auction:${auctionId}`,
+  auctions: () => "auctions",
   portfolio: (userId: string) => `portfolio:${userId}`,
   marketplace: () => "marketplace"
 };
 
 export function isPublicRoom(room: string): boolean {
+  if (room === roomNames.auctions()) {
+    return true;
+  }
+
   if (room === roomNames.marketplace()) {
     return true;
   }
