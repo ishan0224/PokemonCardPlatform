@@ -108,6 +108,10 @@ export const PRICE_SELECTION_DIAGNOSTICS_ENABLED = resolveBooleanEnv(
   process.env.PRICE_SELECTION_DIAGNOSTICS_ENABLED,
   false
 );
+export const PRICE_JOB_ACTIVITY_LOGS_ENABLED = resolveBooleanEnv(
+  process.env.PRICE_JOB_ACTIVITY_LOGS_ENABLED,
+  true
+);
 export const PRICE_JOB_CHUNK_SIZE = resolveIntegerEnv(process.env.PRICE_JOB_CHUNK_SIZE, 50);
 export const PRICE_JOB_MAX_ATTEMPTS = resolveIntegerEnv(process.env.PRICE_JOB_MAX_ATTEMPTS, 5);
 export const PRICE_JOB_RETRY_BASE_DELAY_MS = resolveIntegerEnv(process.env.PRICE_JOB_RETRY_BASE_DELAY_MS, 5_000);
@@ -137,8 +141,7 @@ export const RATE_LIMITS = {
   packPurchase: { limit: 5, windowSeconds: 10 },
   placeBid: { limit: 10, windowSeconds: 10 },
   buyListing: { limit: 5, windowSeconds: 10 },
-  register: { limit: 5, windowSeconds: 5 * 60 },
-  login: { limit: 5, windowSeconds: 5 * 60 }
+  register: { limit: 5, windowSeconds: 5 * 60 }
 } as const;
 
 export const ECONOMICS_DEFAULT_WINDOW_HOURS = resolveIntegerEnv(process.env.ECONOMICS_DEFAULT_WINDOW_HOURS, 24);
