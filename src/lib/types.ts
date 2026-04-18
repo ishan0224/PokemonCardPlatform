@@ -9,6 +9,7 @@ export type RarityTier =
   | "holo_rare"
   | "ultra_rare"
   | "chase";
+export type LiquidityTier = "high" | "medium" | "low" | "illiquid";
 
 export type DropStatus = "upcoming" | "active" | "completed";
 export type CardState = "in_pack" | "owned" | "listed" | "in_auction";

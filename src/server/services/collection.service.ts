@@ -1,12 +1,13 @@
-import { withTransaction } from "../db/pool";
+import { PRICE_CACHE_TTL_SECONDS } from "../config/constants";
+import {
+  getPokemonCardPriceCacheMany,
+  setPokemonCardPriceCache,
+  type PokemonCardPriceCacheValue
+} from "../redis/client";
+import { query } from "../db/pool";
 import type { CardState, RarityTier } from "../../lib/types";
 
-export type CollectionSort =
-  | "newest"
-  | "value_desc"
-  | "value_asc"
-  | "pnl_desc"
-  | "pnl_asc";
+export type CollectionSort = "newest" | "value_desc" | "value_asc" | "pnl_desc" | "pnl_asc";
 
 export type CollectionCardView = {
   id: string;
@@ -60,6 +61,8 @@ const COLLECTION_SORT_SQL: Record<CollectionSort, string> = {
   pnl_asc: "(pc.current_price - c.acquisition_price) ASC, c.created_at DESC"
 };
 
+const RARITY_ORDER: readonly RarityTier[] = ["common", "uncommon", "rare", "holo_rare", "ultra_rare", "chase"];
+
 type CollectionRow = {
   card_id: string;
   owner_id: string;
@@ -77,24 +80,92 @@ type CollectionRow = {
   rarity_tier: RarityTier;
   image_url: string | null;
   image_url_hires: string | null;
-  current_price: string;
 };
 
-type PortfolioSummaryRow = {
-  total_cards: string;
-  total_acquisition: string;
-  total_market: string;
-};
-
-type PortfolioRarityRow = {
+type PortfolioCardRow = {
+  acquisition_price: string;
+  pokemon_card_id: string;
   rarity_tier: RarityTier;
-  count: string;
-  market_value: string;
 };
 
-function mapCollectionRow(row: CollectionRow): CollectionCardView {
-  const acquisitionPrice = Number(row.acquisition_price);
-  const currentPrice = Number(row.current_price);
+type PokemonCardPriceRow = {
+  id: string;
+  current_price: string;
+  previous_price: string;
+  last_price_update: string | null;
+};
+
+function toMoneyCents(value: string | number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+
+  return Math.max(Math.trunc(parsed), 0);
+}
+
+function buildPriceFallbackMap(rows: PokemonCardPriceRow[]): Map<string, PokemonCardPriceCacheValue> {
+  const fallbackMap = new Map<string, PokemonCardPriceCacheValue>();
+
+  for (const row of rows) {
+    if (fallbackMap.has(row.id)) {
+      continue;
+    }
+
+    fallbackMap.set(row.id, {
+      currentPrice: toMoneyCents(row.current_price),
+      previousPrice: toMoneyCents(row.previous_price),
+      updatedAt: row.last_price_update ?? new Date().toISOString()
+    });
+  }
+
+  return fallbackMap;
+}
+
+async function resolveReadThroughPrices(pokemonCardIds: string[]): Promise<Map<string, PokemonCardPriceCacheValue>> {
+  const resolved = new Map<string, PokemonCardPriceCacheValue>();
+  if (pokemonCardIds.length === 0) {
+    return resolved;
+  }
+
+  const uniqueIds = Array.from(new Set(pokemonCardIds));
+  const cachedMap = await getPokemonCardPriceCacheMany(uniqueIds);
+  const missingIds = uniqueIds.filter((pokemonCardId) => !cachedMap.has(pokemonCardId));
+  let fallbackMap = new Map<string, PokemonCardPriceCacheValue>();
+
+  if (missingIds.length > 0) {
+    const fallbackRows = await query<PokemonCardPriceRow>(
+      `SELECT id, current_price, previous_price, last_price_update
+       FROM pokemon_cards
+       WHERE id = ANY($1::uuid[])`,
+      [missingIds]
+    );
+    fallbackMap = buildPriceFallbackMap(fallbackRows.rows);
+  }
+
+  const cacheFillOps: Array<Promise<void>> = [];
+  for (const pokemonCardId of uniqueIds) {
+    const cached = cachedMap.get(pokemonCardId);
+    if (cached) {
+      resolved.set(pokemonCardId, cached);
+      continue;
+    }
+
+    const fallback = fallbackMap.get(pokemonCardId);
+    if (!fallback) {
+      continue;
+    }
+
+    resolved.set(pokemonCardId, fallback);
+    cacheFillOps.push(setPokemonCardPriceCache(pokemonCardId, fallback, PRICE_CACHE_TTL_SECONDS));
+  }
+
+  await Promise.allSettled(cacheFillOps);
+  return resolved;
+}
+
+function mapCollectionRow(row: CollectionRow, currentPrice: number): CollectionCardView {
+  const acquisitionPrice = toMoneyCents(row.acquisition_price);
 
   return {
     id: row.card_id,
@@ -109,7 +180,7 @@ function mapCollectionRow(row: CollectionRow): CollectionCardView {
       row.listing_id && row.listing_price !== null
         ? {
             id: row.listing_id,
-            price: Number(row.listing_price)
+            price: toMoneyCents(row.listing_price)
           }
         : null,
     pokemonCard: {
@@ -141,106 +212,108 @@ export async function listCollectionCards(input: {
   const rarityFilter = input.rarity ?? null;
   const stateFilter = input.state ?? null;
 
-  return withTransaction(async (client) => {
-    const totalResult = await client.query<{ total: string }>(
-      `SELECT COUNT(*)::BIGINT AS total
-       FROM cards c
-       JOIN pokemon_cards pc ON pc.id = c.pokemon_card_id
-       WHERE c.owner_id = $1
-         AND c.state <> 'in_pack'
-         AND ($2::text IS NULL OR c.state = $2::text)
-         AND ($3::text IS NULL OR pc.rarity_tier = $3::text)`,
-      [input.userId, stateFilter, rarityFilter]
-    );
+  const totalResult = await query<{ total: string }>(
+    `SELECT COUNT(*)::BIGINT AS total
+     FROM cards c
+     JOIN pokemon_cards pc ON pc.id = c.pokemon_card_id
+     WHERE c.owner_id = $1
+       AND c.state <> 'in_pack'
+       AND ($2::text IS NULL OR c.state = $2::text)
+       AND ($3::text IS NULL OR pc.rarity_tier = $3::text)`,
+    [input.userId, stateFilter, rarityFilter]
+  );
 
-    const result = await client.query<CollectionRow>(
-      `SELECT c.id AS card_id,
-              c.owner_id,
-              c.slot_number,
-              c.state,
-              c.acquisition_price,
-              c.created_at,
-              l.id AS listing_id,
-              l.price AS listing_price,
-              pc.id AS pokemon_card_id,
-              pc.tcg_id,
-              pc.name,
-              pc.set_name,
-              pc.rarity,
-              pc.rarity_tier,
-              pc.image_url,
-              pc.image_url_hires,
-              pc.current_price
-       FROM cards c
-       JOIN pokemon_cards pc ON pc.id = c.pokemon_card_id
-       LEFT JOIN listings l
-              ON l.card_id = c.id
-             AND l.status = 'active'
-       WHERE c.owner_id = $1
-         AND c.state <> 'in_pack'
-         AND ($2::text IS NULL OR c.state = $2::text)
-         AND ($3::text IS NULL OR pc.rarity_tier = $3::text)
-       ORDER BY ${orderBySql}
-       LIMIT $4
-       OFFSET $5`,
-      [input.userId, stateFilter, rarityFilter, limit, offset]
-    );
+  const result = await query<CollectionRow>(
+    `SELECT c.id AS card_id,
+            c.owner_id,
+            c.slot_number,
+            c.state,
+            c.acquisition_price,
+            c.created_at,
+            l.id AS listing_id,
+            l.price AS listing_price,
+            pc.id AS pokemon_card_id,
+            pc.tcg_id,
+            pc.name,
+            pc.set_name,
+            pc.rarity,
+            pc.rarity_tier,
+            pc.image_url,
+            pc.image_url_hires
+     FROM cards c
+     JOIN pokemon_cards pc ON pc.id = c.pokemon_card_id
+     LEFT JOIN listings l
+            ON l.card_id = c.id
+           AND l.status = 'active'
+     WHERE c.owner_id = $1
+       AND c.state <> 'in_pack'
+       AND ($2::text IS NULL OR c.state = $2::text)
+       AND ($3::text IS NULL OR pc.rarity_tier = $3::text)
+     ORDER BY ${orderBySql}
+     LIMIT $4
+     OFFSET $5`,
+    [input.userId, stateFilter, rarityFilter, limit, offset]
+  );
 
-    return {
-      cards: result.rows.map(mapCollectionRow),
-      page,
-      limit,
-      total: Number(totalResult.rows[0]?.total ?? 0)
-    };
+  const resolvedPrices = await resolveReadThroughPrices(result.rows.map((row) => row.pokemon_card_id));
+  const cards = result.rows.map((row) => {
+    const resolved = resolvedPrices.get(row.pokemon_card_id);
+    const currentPrice = resolved ? resolved.currentPrice : 0;
+    return mapCollectionRow(row, currentPrice);
   });
+
+  return {
+    cards,
+    page,
+    limit,
+    total: Number(totalResult.rows[0]?.total ?? 0)
+  };
 }
 
 export async function getCollectionPortfolio(userId: string): Promise<CollectionPortfolioView> {
-  return withTransaction(async (client) => {
-    const summaryResult = await client.query<PortfolioSummaryRow>(
-      `SELECT COUNT(*)::BIGINT AS total_cards,
-              COALESCE(SUM(c.acquisition_price), 0)::BIGINT AS total_acquisition,
-              COALESCE(SUM(pc.current_price), 0)::BIGINT AS total_market
-       FROM cards c
-       JOIN pokemon_cards pc ON pc.id = c.pokemon_card_id
-       WHERE c.owner_id = $1
-         AND c.state <> 'in_pack'`,
-      [userId]
-    );
+  const result = await query<PortfolioCardRow>(
+    `SELECT c.acquisition_price,
+            pc.id AS pokemon_card_id,
+            pc.rarity_tier
+     FROM cards c
+     JOIN pokemon_cards pc ON pc.id = c.pokemon_card_id
+     WHERE c.owner_id = $1
+       AND c.state <> 'in_pack'`,
+    [userId]
+  );
 
-    const byRarityResult = await client.query<PortfolioRarityRow>(
-      `SELECT pc.rarity_tier,
-              COUNT(*)::BIGINT AS count,
-              COALESCE(SUM(pc.current_price), 0)::BIGINT AS market_value
-       FROM cards c
-       JOIN pokemon_cards pc ON pc.id = c.pokemon_card_id
-       WHERE c.owner_id = $1
-         AND c.state <> 'in_pack'
-       GROUP BY pc.rarity_tier
-       ORDER BY pc.rarity_tier`,
-      [userId]
-    );
+  const resolvedPrices = await resolveReadThroughPrices(result.rows.map((row) => row.pokemon_card_id));
+  const byRarity = new Map<RarityTier, { count: number; marketValue: number }>();
+  let totalAcquisitionValue = 0;
+  let totalMarketValue = 0;
 
-    const summary = summaryResult.rows[0] ?? {
-      total_cards: "0",
-      total_acquisition: "0",
-      total_market: "0"
-    };
+  for (const row of result.rows) {
+    const acquisitionPrice = toMoneyCents(row.acquisition_price);
+    const resolved = resolvedPrices.get(row.pokemon_card_id);
+    const currentPrice = resolved ? resolved.currentPrice : 0;
 
-    const totalCards = Number(summary.total_cards);
-    const totalAcquisitionValue = Number(summary.total_acquisition);
-    const totalMarketValue = Number(summary.total_market);
+    totalAcquisitionValue += acquisitionPrice;
+    totalMarketValue += currentPrice;
 
-    return {
-      totalCards,
-      totalAcquisitionValue,
-      totalMarketValue,
-      totalPnl: totalMarketValue - totalAcquisitionValue,
-      byRarity: byRarityResult.rows.map((row) => ({
-        rarityTier: row.rarity_tier,
-        count: Number(row.count),
-        marketValue: Number(row.market_value)
-      }))
-    };
-  });
+    const rarity = row.rarity_tier;
+    const entry = byRarity.get(rarity) ?? { count: 0, marketValue: 0 };
+    entry.count += 1;
+    entry.marketValue += currentPrice;
+    byRarity.set(rarity, entry);
+  }
+
+  return {
+    totalCards: result.rows.length,
+    totalAcquisitionValue,
+    totalMarketValue,
+    totalPnl: totalMarketValue - totalAcquisitionValue,
+    byRarity: RARITY_ORDER.filter((rarity) => byRarity.has(rarity)).map((rarityTier) => {
+      const entry = byRarity.get(rarityTier);
+      return {
+        rarityTier,
+        count: entry?.count ?? 0,
+        marketValue: entry?.marketValue ?? 0
+      };
+    })
+  };
 }

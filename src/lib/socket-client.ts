@@ -2,6 +2,10 @@
 
 import { io, type Socket } from "socket.io-client";
 import type { PackTier } from "./types";
+import { PRICE_UPDATE_EVENT } from "./realtime/price-update";
+import type { PriceUpdateEntry, PriceUpdateEvent } from "./realtime/price-update";
+export type PriceUpdatePatch = PriceUpdateEntry;
+export type { PriceUpdateEvent };
 
 export type DropInventoryUpdateEvent = {
   dropId: string;
@@ -108,6 +112,7 @@ export type AuctionsRoomHandlers = {
 
 export type PortfolioRoomHandlers = {
   onBalanceUpdate?: (event: BalanceUpdateEvent) => void;
+  onPriceUpdate?: (event: PriceUpdateEvent) => void;
   onConnected?: () => void;
 };
 
@@ -386,6 +391,12 @@ export function subscribeToPortfolioRoom(userId: string, handlers: PortfolioRoom
     socket.emit("join-room", room);
   };
 
+  const onPriceUpdate = (event: PriceUpdateEvent): void => {
+    if (event.userId === userId) {
+      handlers.onPriceUpdate?.(event);
+    }
+  };
+
   if (!socket.connected) {
     socket.connect();
   }
@@ -393,6 +404,7 @@ export function subscribeToPortfolioRoom(userId: string, handlers: PortfolioRoom
   activeSubscriptions += 1;
   socket.on("connect", onConnected);
   socket.on("balance_update", onBalanceUpdate);
+  socket.on(PRICE_UPDATE_EVENT, onPriceUpdate);
   socket.emit("join-room", room);
 
   return () => {
@@ -400,6 +412,7 @@ export function subscribeToPortfolioRoom(userId: string, handlers: PortfolioRoom
 
     socket.off("connect", onConnected);
     socket.off("balance_update", onBalanceUpdate);
+    socket.off(PRICE_UPDATE_EVENT, onPriceUpdate);
     socket.emit("leave-room", room);
 
     if (activeSubscriptions === 0 && socket.connected) {

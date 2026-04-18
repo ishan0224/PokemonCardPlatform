@@ -24,11 +24,21 @@ export const MIN_BID_INCREMENT_BPS = 500; // 5.00%
 export const ANTI_SNIPE_EXTENSION_SECONDS = 30;
 
 export const PRICE_POLLER_INTERVAL_MS = 5 * 60 * 1000;
+export const PRICE_POLLER_BATCH_SIZE = 250;
+export const PRICE_POLLER_OWNED_PRIORITY_QUOTA = 100;
+export const PRICE_CACHE_TTL_SECONDS = 10 * 60;
+export const PRICE_SOURCE_TIMEOUT_MS = 15_000;
+export const PRICE_SOURCE_BATCH_SIZE = 30;
+export const PRICE_SIMULATION_MAX_DRIFT_BPS = 300; // +/-3.00%
+export const PRICE_SIMULATION_SET_DRIFT_BPS = 100; // +/-1.00%
+export const PRICE_SIMULATION_CAP_BPS = 3_000; // +/-30.00%
 export const AUCTION_CLOSER_INTERVAL_MS = 5 * 1000;
 export const DROP_SCHEDULER_INTERVAL_MS = 10 * 1000;
 export const MARKETPLACE_EVENTS_CHANNEL = "marketplace_events";
 export const AUCTION_EVENTS_CHANNEL = "auction_events";
 export const BALANCE_EVENTS_CHANNEL = "balance_events";
+export const PRICE_UPDATES_CHANNEL = "price_updates";
+export const PRICE_UPDATES_LEGACY_CHANNEL = "price_events";
 
 export const RATE_LIMITS = {
   packPurchase: { limit: 5, windowSeconds: 10 },
