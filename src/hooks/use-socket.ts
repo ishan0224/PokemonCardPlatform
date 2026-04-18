@@ -114,6 +114,7 @@ export function usePortfolioRoom(userId: string | null, handlers: PortfolioRoomH
 
     return subscribeToPortfolioRoom(userId, {
       onBalanceUpdate: (event) => handlersRef.current.onBalanceUpdate?.(event),
+      onPriceUpdate: (event) => handlersRef.current.onPriceUpdate?.(event),
       onConnected: () => handlersRef.current.onConnected?.()
     });
   }, [userId]);

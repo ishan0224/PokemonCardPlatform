@@ -59,11 +59,53 @@ CREATE TABLE IF NOT EXISTS pokemon_cards (
     current_price       BIGINT NOT NULL DEFAULT 0,
     previous_price      BIGINT NOT NULL DEFAULT 0,
     last_price_update   TIMESTAMPTZ,
+    liquidity_tier      VARCHAR(20)
+                        CHECK (liquidity_tier IN ('high', 'medium', 'low', 'illiquid')),
+    next_price_refresh_at TIMESTAMPTZ,
+    last_external_price_at TIMESTAMPTZ,
+    last_price_source   VARCHAR(20)
+                        CHECK (last_price_source IN ('external', 'simulated')),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE pokemon_cards
+ADD COLUMN IF NOT EXISTS liquidity_tier VARCHAR(20);
+ALTER TABLE pokemon_cards
+ADD COLUMN IF NOT EXISTS next_price_refresh_at TIMESTAMPTZ;
+ALTER TABLE pokemon_cards
+ADD COLUMN IF NOT EXISTS last_external_price_at TIMESTAMPTZ;
+ALTER TABLE pokemon_cards
+ADD COLUMN IF NOT EXISTS last_price_source VARCHAR(20);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'pokemon_cards_liquidity_tier_check'
+  ) THEN
+    ALTER TABLE pokemon_cards
+      ADD CONSTRAINT pokemon_cards_liquidity_tier_check
+      CHECK (liquidity_tier IN ('high', 'medium', 'low', 'illiquid'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'pokemon_cards_last_price_source_check'
+  ) THEN
+    ALTER TABLE pokemon_cards
+      ADD CONSTRAINT pokemon_cards_last_price_source_check
+      CHECK (last_price_source IN ('external', 'simulated'));
+  END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_pokemon_cards_rarity_tier ON pokemon_cards (rarity_tier);
 CREATE INDEX IF NOT EXISTS idx_pokemon_cards_tcg_id ON pokemon_cards (tcg_id);
+CREATE INDEX IF NOT EXISTS idx_pokemon_cards_next_refresh_tier ON pokemon_cards (next_price_refresh_at, liquidity_tier);
 
 CREATE TABLE IF NOT EXISTS cards (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -80,6 +122,7 @@ CREATE TABLE IF NOT EXISTS cards (
 
 CREATE INDEX IF NOT EXISTS idx_cards_owner_id_state ON cards (owner_id, state);
 CREATE INDEX IF NOT EXISTS idx_cards_pokemon_card_id ON cards (pokemon_card_id);
+CREATE INDEX IF NOT EXISTS idx_cards_active_pokemon_card_id ON cards (pokemon_card_id) WHERE state <> 'in_pack';
 
 CREATE TABLE IF NOT EXISTS listings (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),

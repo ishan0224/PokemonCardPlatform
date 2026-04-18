@@ -7,6 +7,12 @@ type RateLimitResult = {
   resetMs: number;
 };
 
+export type PokemonCardPriceCacheValue = {
+  currentPrice: number;
+  previousPrice: number;
+  updatedAt: string;
+};
+
 let redisClient: Redis | null = null;
 let redisSubscriber: Redis | null = null;
 let redisAdapterPubClient: Redis | null = null;
@@ -163,6 +169,35 @@ function dropInventoryKey(dropId: string, tier: PackTier): string {
   return `drop:${dropId}:${tier}:remaining`;
 }
 
+function pokemonCardPriceKey(pokemonCardId: string): string {
+  return `price:${pokemonCardId}`;
+}
+
+function parsePokemonCardPriceCacheValue(raw: string | null): PokemonCardPriceCacheValue | null {
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<PokemonCardPriceCacheValue>;
+    const currentPrice = Number(parsed.currentPrice);
+    const previousPrice = Number(parsed.previousPrice);
+    const updatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : null;
+
+    if (!updatedAt || !Number.isFinite(currentPrice) || !Number.isFinite(previousPrice)) {
+      return null;
+    }
+
+    return {
+      currentPrice: Math.max(Math.trunc(currentPrice), 0),
+      previousPrice: Math.max(Math.trunc(previousPrice), 0),
+      updatedAt
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
 export async function getDropInventoryCache(dropId: string, tier: PackTier): Promise<number | null> {
   if (!isRedisConfigured()) {
     return null;
@@ -184,6 +219,46 @@ export async function setDropInventoryCache(dropId: string, tier: PackTier, rema
   }
 
   await getRedisClient().set(dropInventoryKey(dropId, tier), String(Math.max(Math.trunc(remaining), 0)));
+}
+
+export async function setPokemonCardPriceCache(
+  pokemonCardId: string,
+  value: PokemonCardPriceCacheValue,
+  ttlSeconds: number
+): Promise<void> {
+  if (!isRedisConfigured()) {
+    return;
+  }
+
+  const safeTtl = Math.max(Math.trunc(ttlSeconds), 1);
+  await getRedisClient().set(
+    pokemonCardPriceKey(pokemonCardId),
+    JSON.stringify(value),
+    "EX",
+    safeTtl
+  );
+}
+
+export async function getPokemonCardPriceCacheMany(
+  pokemonCardIds: string[]
+): Promise<Map<string, PokemonCardPriceCacheValue>> {
+  const cache = new Map<string, PokemonCardPriceCacheValue>();
+  if (!isRedisConfigured() || pokemonCardIds.length === 0) {
+    return cache;
+  }
+
+  const uniqueIds = Array.from(new Set(pokemonCardIds));
+  const keys = uniqueIds.map((pokemonCardId) => pokemonCardPriceKey(pokemonCardId));
+  const values = await getRedisClient().mget(keys);
+
+  for (let index = 0; index < uniqueIds.length; index += 1) {
+    const parsed = parsePokemonCardPriceCacheValue(values[index] ?? null);
+    if (parsed) {
+      cache.set(uniqueIds[index], parsed);
+    }
+  }
+
+  return cache;
 }
 
 export async function closeRedisClients(): Promise<void> {

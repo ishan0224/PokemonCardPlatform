@@ -1,5 +1,6 @@
 import { dollarsToCents } from "../src/lib/decimal";
 import type { RarityTier } from "../src/lib/types";
+import { computeNextPriceRefreshAt, defaultLiquidityTierForRarity } from "../src/server/config/price-liquidity";
 import { closeDatabasePool, query } from "../src/server/db/pool";
 
 const POKEMON_TCG_API_URL = process.env.POKEMON_TCG_API_URL ?? "https://api.pokemontcg.io/v2/cards";
@@ -91,7 +92,13 @@ function mapRarityTier(rawRarity: string | undefined): RarityTier | null {
   return null;
 }
 
-function extractMarketPriceCents(card: TcgApiCard, rarityTier: RarityTier): number {
+type PriceExtraction = {
+  priceCents: number;
+  source: "external" | "simulated";
+  lastExternalPriceAt: Date | null;
+};
+
+function extractMarketPrice(card: TcgApiCard, rarityTier: RarityTier): PriceExtraction {
   const priceVariants = card.tcgplayer?.prices;
 
   if (priceVariants) {
@@ -104,13 +111,21 @@ function extractMarketPriceCents(card: TcgApiCard, rarityTier: RarityTier): numb
 
       for (const amount of candidates) {
         if (typeof amount === "number" && Number.isFinite(amount) && amount > 0) {
-          return dollarsToCents(amount);
+          return {
+            priceCents: dollarsToCents(amount),
+            source: "external",
+            lastExternalPriceAt: new Date()
+          };
         }
       }
     }
   }
 
-  return DEFAULT_PRICE_BY_RARITY_CENTS[rarityTier];
+  return {
+    priceCents: DEFAULT_PRICE_BY_RARITY_CENTS[rarityTier],
+    source: "simulated",
+    lastExternalPriceAt: null
+  };
 }
 
 async function fetchCardsPage(page: number): Promise<TcgApiResponse> {
@@ -150,13 +165,15 @@ async function upsertCard(card: TcgApiCard, rarityTier: RarityTier): Promise<voi
   }
 
   const rarity = card.rarity ?? "Unknown";
-  const currentPrice = extractMarketPriceCents(card, rarityTier);
+  const extracted = extractMarketPrice(card, rarityTier);
+  const defaultLiquidityTier = defaultLiquidityTierForRarity(rarityTier);
+  const nextPriceRefreshAt = computeNextPriceRefreshAt(defaultLiquidityTier);
 
   await query(
     `INSERT INTO pokemon_cards
-       (tcg_id, name, set_name, set_id, rarity, rarity_tier, image_url, image_url_hires, current_price, previous_price, last_price_update)
+       (tcg_id, name, set_name, set_id, rarity, rarity_tier, image_url, image_url_hires, current_price, previous_price, last_price_update, liquidity_tier, next_price_refresh_at, last_external_price_at, last_price_source)
      VALUES
-       ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, now())
+       ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, now(), $10, $11, $12, $13)
      ON CONFLICT (tcg_id)
      DO UPDATE
        SET name = EXCLUDED.name,
@@ -168,8 +185,26 @@ async function upsertCard(card: TcgApiCard, rarityTier: RarityTier): Promise<voi
            image_url_hires = EXCLUDED.image_url_hires,
            previous_price = pokemon_cards.current_price,
            current_price = EXCLUDED.current_price,
-           last_price_update = now()`,
-    [tcgId, name, setName, card.set?.id ?? null, rarity, rarityTier, card.images?.small ?? null, card.images?.large ?? null, currentPrice]
+           last_price_update = now(),
+           liquidity_tier = COALESCE(pokemon_cards.liquidity_tier, EXCLUDED.liquidity_tier),
+           next_price_refresh_at = COALESCE(pokemon_cards.next_price_refresh_at, EXCLUDED.next_price_refresh_at),
+           last_external_price_at = EXCLUDED.last_external_price_at,
+           last_price_source = EXCLUDED.last_price_source`,
+    [
+      tcgId,
+      name,
+      setName,
+      card.set?.id ?? null,
+      rarity,
+      rarityTier,
+      card.images?.small ?? null,
+      card.images?.large ?? null,
+      extracted.priceCents,
+      defaultLiquidityTier,
+      nextPriceRefreshAt.toISOString(),
+      extracted.lastExternalPriceAt?.toISOString() ?? null,
+      extracted.source
+    ]
   );
 }
 

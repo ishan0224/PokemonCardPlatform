@@ -12,8 +12,11 @@ import {
 import {
   AUCTION_EVENTS_CHANNEL,
   BALANCE_EVENTS_CHANNEL,
-  MARKETPLACE_EVENTS_CHANNEL
+  MARKETPLACE_EVENTS_CHANNEL,
+  PRICE_UPDATES_CHANNEL,
+  PRICE_UPDATES_LEGACY_CHANNEL
 } from "../config/constants";
+import { PRICE_UPDATE_EVENT, type PriceUpdateEvent } from "../../lib/realtime/price-update";
 import { canJoinPrivateRoom, isPublicRoom, roomNames } from "./rooms";
 
 type MarketplaceRealtimeEventName = "new_listing" | "listing_sold" | "listing_cancelled";
@@ -38,6 +41,11 @@ type BalanceRealtimeEnvelope = {
     userId?: string;
   } & Record<string, unknown>;
 };
+type PriceRealtimeEventName = typeof PRICE_UPDATE_EVENT;
+type PriceRealtimeEnvelope = {
+  event: PriceRealtimeEventName;
+  payload: PriceUpdateEvent;
+};
 
 const MARKETPLACE_EVENTS = new Set<MarketplaceRealtimeEventName>([
   "new_listing",
@@ -52,10 +60,14 @@ const AUCTION_EVENTS = new Set<AuctionRealtimeEventName>([
   "auction_updated"
 ]);
 const BALANCE_EVENTS = new Set<BalanceRealtimeEventName>(["balance_update"]);
+const PRICE_EVENTS = new Set<PriceRealtimeEventName>([PRICE_UPDATE_EVENT]);
 
 let marketplaceRelayReady = false;
 let auctionRelayReady = false;
 let balanceRelayReady = false;
+let priceRelayReady = false;
+const PRICE_MESSAGE_DEDUP_WINDOW_MS = 5_000;
+const recentPriceRelayMessages = new Map<string, number>();
 
 function getAuctionIdFromRoom(room: string): string | null {
   if (!room.startsWith("auction:")) {
@@ -193,6 +205,67 @@ async function setupBalanceRelay(io: IOServer): Promise<void> {
   }
 }
 
+async function setupPriceRelay(io: IOServer): Promise<void> {
+  if (priceRelayReady) {
+    return;
+  }
+
+  if (!canUseRedisPubSub()) {
+    return;
+  }
+
+  priceRelayReady = true;
+
+  const attachSubscriber = async (channel: string): Promise<void> => {
+    await subscribe(channel, (message) => {
+      try {
+        const now = Date.now();
+        for (const [key, seenAt] of recentPriceRelayMessages.entries()) {
+          if (now - seenAt > PRICE_MESSAGE_DEDUP_WINDOW_MS) {
+            recentPriceRelayMessages.delete(key);
+          }
+        }
+
+        if (recentPriceRelayMessages.has(message)) {
+          return;
+        }
+
+        recentPriceRelayMessages.set(message, now);
+
+        const parsed = JSON.parse(message) as PriceRealtimeEnvelope;
+        if (!PRICE_EVENTS.has(parsed.event)) {
+          return;
+        }
+
+        const userId = typeof parsed.payload.userId === "string" ? parsed.payload.userId : null;
+        if (!userId) {
+          return;
+        }
+
+        io.to(roomNames.portfolio(userId)).emit(parsed.event, parsed.payload);
+      } catch (error) {
+        const typed = error as { message?: string };
+        console.warn(`[price-events] Invalid pub/sub message: ${typed.message ?? "unknown error"}`);
+      }
+    });
+  };
+
+  try {
+    const subscriptionResults = await Promise.allSettled([
+      attachSubscriber(PRICE_UPDATES_CHANNEL),
+      attachSubscriber(PRICE_UPDATES_LEGACY_CHANNEL)
+    ]);
+
+    if (subscriptionResults.every((result) => result.status === "rejected")) {
+      throw new Error("Failed to subscribe to both price update channels.");
+    }
+  } catch (error) {
+    priceRelayReady = false;
+    const typed = error as { message?: string };
+    console.warn(`[price-events] Failed to subscribe: ${typed.message ?? "unknown error"}`);
+  }
+}
+
 export function createSocketServer(httpServer: HttpServer): IOServer {
   const io = new IOServer(httpServer, {
     cors: {
@@ -211,6 +284,7 @@ export function createSocketServer(httpServer: HttpServer): IOServer {
   void setupMarketplaceRelay(io);
   void setupAuctionRelay(io);
   void setupBalanceRelay(io);
+  void setupPriceRelay(io);
 
   io.use((socket, next) => {
     void (async () => {

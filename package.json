@@ -12,6 +12,8 @@
     "typecheck": "tsc --project tsconfig.typecheck.json --noEmit --incremental false && tsc --project tsconfig.server.json --noEmit --incremental false",
     "verify:connections": "tsx scripts/verify-connections.ts",
     "seed:cards": "tsx scripts/card-seeder.ts",
+    "backfill:price-liquidity": "tsx scripts/backfill-price-liquidity.ts",
+    "backfill:price-liquidity:dry": "tsx scripts/backfill-price-liquidity.ts --dry-run",
     "seed:drop": "tsx scripts/seed-initial-drop.ts",
     "check": "npm run typecheck"
   },
