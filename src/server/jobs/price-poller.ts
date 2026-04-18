@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import {
+  PRICE_JOB_ACTIVITY_LOGS_ENABLED,
   PRICE_JOB_CHUNK_SIZE,
   PRICE_JOB_KEY_BUCKET_MS,
   PRICE_JOB_MAX_ATTEMPTS,
@@ -82,7 +83,7 @@ export function startPricePoller(): JobStopper {
         }))
       );
 
-      if (enqueueResult.enqueued > 0 || enqueueResult.duplicates > 0) {
+      if (PRICE_JOB_ACTIVITY_LOGS_ENABLED && (enqueueResult.enqueued > 0 || enqueueResult.duplicates > 0)) {
         console.log(
           `[price-scheduler] selected=${selectedIds.length} jobs=${chunked.length} enqueued=${enqueueResult.enqueued} duplicates=${enqueueResult.duplicates}`
         );

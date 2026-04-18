@@ -2,37 +2,53 @@ import { loadEnvConfig } from "@next/env";
 import http from "http";
 import express from "express";
 import next from "next";
-import { createSocketServer } from "./src/server/websocket";
-import { startAuctionCloser } from "./src/server/jobs/auction-closer";
-import { startDropScheduler } from "./src/server/jobs/drop-scheduler";
-import { startPricePoller, type JobStopper } from "./src/server/jobs/price-poller";
-import { startPriceWorker } from "./src/server/jobs/price-worker";
-import { closeDatabasePool, pingDatabase } from "./src/server/db/pool";
-import { closeRedisClients, pingRedis } from "./src/server/redis/client";
-import { PRICE_SCHEDULER_ENABLED, PRICE_WORKER_ENABLED } from "./src/server/config/constants";
-import { flushPriceUpdateCoalescer } from "./src/server/services/price.service";
-import { flushAuctionsListCoalescer } from "./src/server/websocket/auctions-list-coalescer";
 
 loadEnvConfig(process.cwd());
 
 const port = Number(process.env.PORT ?? 3000);
 const dev = process.env.NODE_ENV !== "production";
 
-async function warmInfrastructure(): Promise<void> {
-  const [dbResult, redisResult] = await Promise.allSettled([pingDatabase(), pingRedis()]);
-
-  if (dbResult.status === "rejected") {
-    const typed = dbResult.reason as { message?: string };
-    console.warn(`[startup-warmup] Database warmup skipped: ${typed?.message ?? "unknown error"}`);
-  }
-
-  if (redisResult.status === "rejected") {
-    const typed = redisResult.reason as { message?: string };
-    console.warn(`[startup-warmup] Redis warmup skipped: ${typed?.message ?? "unknown error"}`);
-  }
-}
+type JobStopper = () => Promise<void>;
 
 async function bootstrap(): Promise<void> {
+  const [
+    { createSocketServer },
+    { startAuctionCloser },
+    { startDropScheduler },
+    { startPricePoller },
+    { startPriceWorker },
+    { closeDatabasePool, pingDatabase },
+    { closeRedisClients, pingRedis },
+    { PRICE_SCHEDULER_ENABLED, PRICE_WORKER_ENABLED },
+    { flushPriceUpdateCoalescer },
+    { flushAuctionsListCoalescer }
+  ] = await Promise.all([
+    import("./src/server/websocket/index.js"),
+    import("./src/server/jobs/auction-closer.js"),
+    import("./src/server/jobs/drop-scheduler.js"),
+    import("./src/server/jobs/price-poller.js"),
+    import("./src/server/jobs/price-worker.js"),
+    import("./src/server/db/pool.js"),
+    import("./src/server/redis/client.js"),
+    import("./src/server/config/constants.js"),
+    import("./src/server/services/price.service.js"),
+    import("./src/server/websocket/auctions-list-coalescer.js")
+  ]);
+
+  const warmInfrastructure = async (): Promise<void> => {
+    const [dbResult, redisResult] = await Promise.allSettled([pingDatabase(), pingRedis()]);
+
+    if (dbResult.status === "rejected") {
+      const typed = dbResult.reason as { message?: string };
+      console.warn(`[startup-warmup] Database warmup skipped: ${typed?.message ?? "unknown error"}`);
+    }
+
+    if (redisResult.status === "rejected") {
+      const typed = redisResult.reason as { message?: string };
+      console.warn(`[startup-warmup] Redis warmup skipped: ${typed?.message ?? "unknown error"}`);
+    }
+  };
+
   const nextApp = next({ dev });
   const requestHandler = nextApp.getRequestHandler();
 

@@ -1,4 +1,5 @@
 import {
+  PRICE_JOB_ACTIVITY_LOGS_ENABLED,
   PRICE_JOB_RETRY_BASE_DELAY_MS,
   PRICE_JOB_RETRY_MAX_DELAY_MS,
   PRICE_WORKER_LOCK_TIMEOUT_MS,
@@ -68,7 +69,7 @@ export function startPriceWorker(): JobStopper {
         const result = await processPriceBatchByPokemonCardIds(job.payload.pokemonCardIds);
         await markPriceUpdateJobCompleted(job.id);
 
-        if (result.changedCards > 0) {
+        if (PRICE_JOB_ACTIVITY_LOGS_ENABLED && result.changedCards > 0) {
           console.log(
             `[price-worker] job=${job.id} scanned=${result.scannedCards} changed=${result.changedCards} notifiedUsers=${result.emittedUsers}`
           );
