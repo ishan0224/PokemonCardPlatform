@@ -1,10 +1,13 @@
 import { query } from "../db/pool";
 
+export type UserRole = "user" | "admin";
+
 export type AppUser = {
   id: string;
   username: string;
   email: string;
   balance: number;
+  role: UserRole;
 };
 
 export class UserServiceError extends Error {
@@ -31,18 +34,24 @@ function mapUserRow(row: {
   username: string;
   email: string;
   balance: string | number;
+  role: string;
 }): AppUser {
+  if (row.role !== "user" && row.role !== "admin") {
+    throw new UserServiceError("User role is invalid.", 500, "INVALID_USER_ROLE");
+  }
+
   return {
     id: row.id,
     username: row.username,
     email: row.email,
-    balance: Number(row.balance)
+    balance: Number(row.balance),
+    role: row.role
   };
 }
 
 export async function getAppUserById(userId: string): Promise<AppUser | null> {
-  const result = await query<{ id: string; username: string; email: string; balance: string }>(
-    "SELECT id, username, email, balance FROM users WHERE id = $1",
+  const result = await query<{ id: string; username: string; email: string; balance: string; role: string }>(
+    "SELECT id, username, email, balance, role FROM users WHERE id = $1",
     [userId]
   );
 
@@ -63,14 +72,14 @@ export async function upsertAppUserProfile(input: {
   const fallbackUsername = sanitizeUsernameFromEmail(input.email);
 
   try {
-    const result = await query<{ id: string; username: string; email: string; balance: string }>(
+    const result = await query<{ id: string; username: string; email: string; balance: string; role: string }>(
       `INSERT INTO users (id, username, email)
        VALUES ($1, COALESCE($2, $3), $4)
        ON CONFLICT (id)
        DO UPDATE
        SET username = CASE WHEN $2 IS NULL THEN users.username ELSE EXCLUDED.username END,
            email = EXCLUDED.email
-       RETURNING id, username, email, balance`,
+       RETURNING id, username, email, balance, role`,
       [input.id, normalizedUsername, fallbackUsername, input.email]
     );
 

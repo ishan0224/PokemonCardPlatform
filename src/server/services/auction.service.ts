@@ -11,6 +11,10 @@ import {
 import { canUseRedisPubSub, publish } from "../redis/client";
 import { getIO } from "../websocket/io";
 import { roomNames } from "../websocket/rooms";
+import {
+  emitAuctionListEventWithCoalescing,
+  type AuctionListRealtimeEventName
+} from "../websocket/auctions-list-coalescer";
 import { calculateFeeFromBps } from "../../lib/decimal";
 import type { AuctionDurationType, AuctionStatus, RarityTier } from "../../lib/types";
 
@@ -271,7 +275,7 @@ async function emitAuctionEventViaSocket(
     }
 
     if (AUCTIONS_LIST_ROOM_EVENTS.has(event)) {
-      io.to(roomNames.auctions()).emit(event, payload);
+      emitAuctionListEventWithCoalescing(io, event as AuctionListRealtimeEventName, payload);
     }
   } catch (_error) {
     // Socket server may be unavailable in script/test contexts.

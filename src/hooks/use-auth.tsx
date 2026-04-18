@@ -9,6 +9,7 @@ type AuthState = {
     id: string;
     username: string;
     email: string;
+    role: "user" | "admin";
   } | null;
   balance: {
     total: number;

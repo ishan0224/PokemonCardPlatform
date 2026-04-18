@@ -6,8 +6,12 @@ import { createSocketServer } from "./src/server/websocket";
 import { startAuctionCloser } from "./src/server/jobs/auction-closer";
 import { startDropScheduler } from "./src/server/jobs/drop-scheduler";
 import { startPricePoller, type JobStopper } from "./src/server/jobs/price-poller";
+import { startPriceWorker } from "./src/server/jobs/price-worker";
 import { closeDatabasePool, pingDatabase } from "./src/server/db/pool";
 import { closeRedisClients, pingRedis } from "./src/server/redis/client";
+import { PRICE_SCHEDULER_ENABLED, PRICE_WORKER_ENABLED } from "./src/server/config/constants";
+import { flushPriceUpdateCoalescer } from "./src/server/services/price.service";
+import { flushAuctionsListCoalescer } from "./src/server/websocket/auctions-list-coalescer";
 
 loadEnvConfig(process.cwd());
 
@@ -47,11 +51,14 @@ async function bootstrap(): Promise<void> {
 
   await warmInfrastructure();
 
-  const stopJobs: JobStopper[] = [
-    startPricePoller(),
-    startAuctionCloser(),
-    startDropScheduler()
-  ];
+  const stopJobs: JobStopper[] = [startAuctionCloser(), startDropScheduler()];
+  if (PRICE_SCHEDULER_ENABLED) {
+    stopJobs.push(startPricePoller());
+  }
+
+  if (PRICE_WORKER_ENABLED) {
+    stopJobs.push(startPriceWorker());
+  }
 
   let shuttingDown = false;
 
@@ -65,6 +72,8 @@ async function bootstrap(): Promise<void> {
 
     try {
       await Promise.allSettled(stopJobs.map((stop) => stop()));
+      await flushPriceUpdateCoalescer();
+      await flushAuctionsListCoalescer(io);
 
       await new Promise<void>((resolve) => {
         io.close(() => resolve());

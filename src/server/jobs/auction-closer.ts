@@ -7,6 +7,14 @@ import {
 } from "../services/auction.service";
 import type { JobStopper } from "./price-poller";
 
+async function waitForTickDrain(isRunning: () => boolean): Promise<void> {
+  while (isRunning()) {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 25);
+    });
+  }
+}
+
 type ClaimedAuctionRow = {
   id: string;
   card_id: string;
@@ -316,5 +324,6 @@ export function startAuctionCloser(): JobStopper {
 
   return async () => {
     clearInterval(timer);
+    await waitForTickDrain(() => running);
   };
 }

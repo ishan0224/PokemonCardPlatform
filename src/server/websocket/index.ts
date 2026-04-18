@@ -18,6 +18,7 @@ import {
 } from "../config/constants";
 import { PRICE_UPDATE_EVENT, type PriceUpdateEvent } from "../../lib/realtime/price-update";
 import { canJoinPrivateRoom, isPublicRoom, roomNames } from "./rooms";
+import { emitAuctionListEventWithCoalescing, type AuctionListRealtimeEventName } from "./auctions-list-coalescer";
 
 type MarketplaceRealtimeEventName = "new_listing" | "listing_sold" | "listing_cancelled";
 type MarketplaceRealtimeEnvelope = {
@@ -59,6 +60,7 @@ const AUCTION_EVENTS = new Set<AuctionRealtimeEventName>([
   "auction_created",
   "auction_updated"
 ]);
+const AUCTIONS_LIST_EVENTS = new Set<AuctionListRealtimeEventName>(["auction_created", "auction_updated", "auction_ended"]);
 const BALANCE_EVENTS = new Set<BalanceRealtimeEventName>(["balance_update"]);
 const PRICE_EVENTS = new Set<PriceRealtimeEventName>([PRICE_UPDATE_EVENT]);
 
@@ -145,13 +147,15 @@ async function setupAuctionRelay(io: IOServer): Promise<void> {
         }
 
         if (parsed.event === "auction_created" || parsed.event === "auction_updated") {
-          io.to(roomNames.auctions()).emit(parsed.event, parsed.payload);
+          if (AUCTIONS_LIST_EVENTS.has(parsed.event)) {
+            emitAuctionListEventWithCoalescing(io, parsed.event, parsed.payload);
+          }
           return;
         }
 
         if (parsed.event === "auction_ended") {
           io.to(roomNames.auction(auctionId)).emit(parsed.event, parsed.payload);
-          io.to(roomNames.auctions()).emit(parsed.event, parsed.payload);
+          emitAuctionListEventWithCoalescing(io, parsed.event, parsed.payload);
           return;
         }
 

@@ -28,3 +28,6 @@ docs/
 
 # macOS
 .DS_Store
+
+# claude
+.claude/

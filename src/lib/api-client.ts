@@ -3,7 +3,9 @@ import type {
   AuctionStatus,
   CardState,
   DropStatus,
+  EconomicsSummary,
   ListingStatus,
+  PackEconomicsBundle,
   PackTier,
   RarityTier
 } from "./types";
@@ -12,6 +14,7 @@ export type ApiUser = {
   id: string;
   username: string;
   email: string;
+  role: "user" | "admin";
 };
 
 export type ApiBalance = {
@@ -344,6 +347,10 @@ export function mapApiErrorToMessage(error: unknown): string {
         return "Bid is below the minimum required amount.";
       case "INVALID_BID_AMOUNT":
         return "Bid amount is invalid.";
+      case "FORBIDDEN":
+        return "You do not have permission to access this page.";
+      case "INVALID_WINDOW":
+        return "Time window is invalid.";
       case "REQUEST_ABORTED":
         return "";
       default:
@@ -567,6 +574,42 @@ export const apiClient = {
     return requestJson(`/api/auctions/${auctionId}/bid`, {
       method: "POST",
       body: JSON.stringify({ amount }),
+      signal
+    });
+  },
+
+  getEconomicsSummary(
+    input: { fromIso?: string; toIso?: string } = {},
+    signal?: AbortSignal
+  ): Promise<{ summary: EconomicsSummary }> {
+    const params = new URLSearchParams();
+    if (input.fromIso) {
+      params.set("from", input.fromIso);
+    }
+    if (input.toIso) {
+      params.set("to", input.toIso);
+    }
+    const query = params.toString();
+    return requestJson(`/api/admin/economics${query ? `?${query}` : ""}`, {
+      method: "GET",
+      signal
+    });
+  },
+
+  getPackEconomics(
+    input: { fromIso?: string; toIso?: string } = {},
+    signal?: AbortSignal
+  ): Promise<{ bundle: PackEconomicsBundle }> {
+    const params = new URLSearchParams();
+    if (input.fromIso) {
+      params.set("from", input.fromIso);
+    }
+    if (input.toIso) {
+      params.set("to", input.toIso);
+    }
+    const query = params.toString();
+    return requestJson(`/api/admin/economics/packs${query ? `?${query}` : ""}`, {
+      method: "GET",
       signal
     });
   }
