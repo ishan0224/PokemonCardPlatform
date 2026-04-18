@@ -1,7 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { RATE_LIMITS } from "@/server/config/constants";
-import { enforceRateLimit } from "@/server/middleware/rate-limit";
-import { ApiRouteError, getClientIp, handleRouteError, readJsonBody } from "@/server/http/api";
+import { ApiRouteError, handleRouteError, readJsonBody } from "@/server/http/api";
 import {
   createSupabaseAnonClient,
   setAuthSessionCookies
@@ -56,13 +54,6 @@ function mapRegisterProviderError(error: AuthProviderError): ApiRouteError {
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    if (process.env.NODE_ENV === "production") {
-      await enforceRateLimit({
-        key: `auth:register:${getClientIp(request)}`,
-        ...RATE_LIMITS.register
-      });
-    }
-
     const body = validateRegisterBody(await readJsonBody<RegisterBody>(request));
 
     const supabase = createSupabaseAnonClient();
