@@ -6,6 +6,14 @@ import { roomNames } from "../websocket/rooms";
 import type { JobStopper } from "./price-poller";
 import { syncDropInventoryCache } from "../services/drop.service";
 
+async function waitForTickDrain(isRunning: () => boolean): Promise<void> {
+  while (isRunning()) {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 25);
+    });
+  }
+}
+
 type TierInventoryRow = {
   tier: PackTier;
   remaining_inventory: number;
@@ -134,5 +142,6 @@ export function startDropScheduler(): JobStopper {
 
   return async () => {
     clearInterval(timer);
+    await waitForTickDrain(() => running);
   };
 }

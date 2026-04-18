@@ -44,6 +44,7 @@ export function SiteHeader(): JSX.Element {
             <NavLink href="/collection" label="Collection" />
             <NavLink href="/marketplace" label="Marketplace" />
             <NavLink href="/auctions" label="Auctions" />
+            {user?.role === "admin" ? <NavLink href="/admin" label="Admin" /> : null}
           </nav>
         </div>
 

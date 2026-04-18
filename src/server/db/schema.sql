@@ -8,6 +8,26 @@ CREATE TABLE IF NOT EXISTS users (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS role VARCHAR(16) NOT NULL DEFAULT 'user';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'users_role_check'
+  ) THEN
+    ALTER TABLE users
+      ADD CONSTRAINT users_role_check
+      CHECK (role IN ('user', 'admin'));
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_users_role_admin
+  ON users (role)
+  WHERE role = 'admin';
+
 CREATE TABLE IF NOT EXISTS drops (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     scheduled_at    TIMESTAMPTZ NOT NULL,
@@ -198,10 +218,70 @@ CREATE INDEX IF NOT EXISTS idx_transactions_user_id ON transactions (user_id, cr
 CREATE TABLE IF NOT EXISTS platform_revenue (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     type            VARCHAR(20) NOT NULL
-                    CHECK (type IN ('pack_margin', 'trade_fee', 'auction_fee')),
+                    CHECK (type IN ('pack_margin', 'trade_fee', 'auction_fee', 'platform_discount', 'manual_adjustment')),
     amount          BIGINT NOT NULL,
     reference_id    UUID,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'platform_revenue_type_check'
+  ) THEN
+    ALTER TABLE platform_revenue
+      DROP CONSTRAINT platform_revenue_type_check;
+  END IF;
+
+  ALTER TABLE platform_revenue
+    ADD CONSTRAINT platform_revenue_type_check
+    CHECK (type IN ('pack_margin', 'trade_fee', 'auction_fee', 'platform_discount', 'manual_adjustment'));
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_platform_revenue_type ON platform_revenue (type, created_at);
+
+CREATE TABLE IF NOT EXISTS price_update_jobs (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_key         TEXT UNIQUE NOT NULL,
+    status          VARCHAR(20) NOT NULL
+                    CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+    run_at          TIMESTAMPTZ NOT NULL,
+    attempts        INT NOT NULL DEFAULT 0,
+    max_attempts    INT NOT NULL DEFAULT 5,
+    locked_at       TIMESTAMPTZ,
+    locked_by       TEXT,
+    payload         JSONB NOT NULL,
+    last_error      TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at    TIMESTAMPTZ
+);
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'price_update_jobs_status_check'
+  ) THEN
+    ALTER TABLE price_update_jobs
+      DROP CONSTRAINT price_update_jobs_status_check;
+  END IF;
+
+  ALTER TABLE price_update_jobs
+    ADD CONSTRAINT price_update_jobs_status_check
+    CHECK (status IN ('pending', 'running', 'completed', 'failed'));
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_price_update_jobs_ready
+ON price_update_jobs (run_at)
+WHERE status = 'pending';
+
+CREATE INDEX IF NOT EXISTS idx_price_update_jobs_running_locked_at
+ON price_update_jobs (locked_at)
+WHERE status = 'running';
+
+CREATE INDEX IF NOT EXISTS idx_price_update_jobs_status_run_at
+ON price_update_jobs (status, run_at);

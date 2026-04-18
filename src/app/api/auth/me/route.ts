@@ -25,7 +25,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         user: {
           id: appUser.id,
           username: appUser.username,
-          email: appUser.email
+          email: appUser.email,
+          role: appUser.role
         },
         balance
       },

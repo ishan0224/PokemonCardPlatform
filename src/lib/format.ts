@@ -61,3 +61,34 @@ export function formatDateTime(value: string): string {
 export function formatTierLabel(tier: PackTier): string {
   return tier.charAt(0).toUpperCase() + tier.slice(1);
 }
+
+export function formatSignedMoneyCents(value: number): string {
+  if (value > 0) {
+    return `+${moneyFormatter.format(value / 100)}`;
+  }
+  if (value < 0) {
+    return `-${moneyFormatter.format(Math.abs(value) / 100)}`;
+  }
+  return moneyFormatter.format(0);
+}
+
+export function formatPercentBps(bps: number, fractionDigits = 2): string {
+  const sign = bps > 0 ? "+" : bps < 0 ? "−" : "";
+  const abs = Math.abs(bps) / 100;
+  return `${sign}${abs.toFixed(fractionDigits)}%`;
+}
+
+export function formatPlainPercentBps(bps: number, fractionDigits = 2): string {
+  return `${(bps / 100).toFixed(fractionDigits)}%`;
+}
+
+const COMPACT_FORMATTER = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1
+});
+
+export function formatCompactCents(value: number): string {
+  const sign = value < 0 ? "-" : "";
+  const abs = Math.abs(value) / 100;
+  return `${sign}$${COMPACT_FORMATTER.format(abs)}`;
+}
