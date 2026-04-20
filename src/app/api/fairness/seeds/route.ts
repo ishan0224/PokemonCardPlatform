@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { type NextRequest, NextResponse } from "next/server";
 import { ApiRouteError, handleRouteError, requireUuid } from "@/server/http/api";
 import { listFairnessSeeds, type FairnessSeedStatusFilter } from "@/server/services/fairness-query.service";

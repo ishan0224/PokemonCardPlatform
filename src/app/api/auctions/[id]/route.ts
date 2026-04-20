@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { type NextRequest, NextResponse } from "next/server";
 import { getAccessTokenFromRequest } from "@/server/middleware/auth";
 import { handleRouteError, requireUuid } from "@/server/http/api";

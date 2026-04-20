@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { type NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import type { PackTier } from "@/lib/types";

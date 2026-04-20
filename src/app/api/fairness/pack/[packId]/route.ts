@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { randomUUID } from "crypto";
 import { type NextRequest, NextResponse } from "next/server";
 import { getClientIp, handleRouteError, requireUuid } from "@/server/http/api";
