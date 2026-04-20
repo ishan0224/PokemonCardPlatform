@@ -1,14 +1,29 @@
+import { randomUUID } from "crypto";
 import { type NextRequest, NextResponse } from "next/server";
-import { handleRouteError, requireUuid } from "@/server/http/api";
+import { getClientIp, handleRouteError, requireUuid } from "@/server/http/api";
 import { getFairnessPackView } from "@/server/services/fairness-query.service";
+import { writeSecurityEventFireAndForget } from "@/server/services/security-event.service";
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   context: { params: { packId: string } }
 ): Promise<NextResponse> {
+  const requestKey = request.headers.get("x-request-id") ?? randomUUID();
+  const ip = getClientIp(request);
+
   try {
     const packId = requireUuid(context.params.packId, "Pack ID");
     const pack = await getFairnessPackView(packId);
+    writeSecurityEventFireAndForget({
+      eventType: "fairness_verification_run",
+      ip,
+      requestKey,
+      evidence: {
+        packId: pack.packId,
+        dropId: pack.dropId,
+        verificationStatus: pack.verificationStatus
+      }
+    });
     return NextResponse.json({ pack }, { status: 200 });
   } catch (error) {
     return handleRouteError(error);

@@ -8,6 +8,7 @@ import type { JobStopper } from "./price-poller";
 import { syncDropInventoryCache } from "../services/drop.service";
 import { createEncryptedServerSeed, ensureNonceCounterRow } from "../services/fairness.service";
 import { getLatestGenerationVersion } from "../services/pack-generation-version.service";
+import { initializeDropLotteryActivation } from "../services/drop-lottery.service";
 
 async function waitForTickDrain(isRunning: () => boolean): Promise<void> {
   while (isRunning()) {
@@ -258,6 +259,7 @@ async function runSchedulerTick(): Promise<void> {
   const activeDrops = await query<{ id: string }>("SELECT id FROM drops WHERE status = 'active'");
   for (const row of activeDrops.rows) {
     await ensureActiveDropFairnessSetup(row.id, fallbackGenerationVersionId);
+    await initializeDropLotteryActivation(row.id);
   }
 
   await syncActiveDropInventoryCache();
@@ -265,6 +267,7 @@ async function runSchedulerTick(): Promise<void> {
   const activatedDropIds = await activateDueDrops(fallbackGenerationVersionId);
 
   for (const dropId of activatedDropIds) {
+    await initializeDropLotteryActivation(dropId);
     await syncDropInventoryCache(dropId);
 
     emitDropEvent(dropId, "drop_started", {

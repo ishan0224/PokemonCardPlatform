@@ -14,6 +14,7 @@ async function bootstrap(): Promise<void> {
   const [
     { createSocketServer },
     { startAuctionCloser },
+    { startDropLotteryCloser },
     { startDropScheduler },
     { startPricePoller },
     { startPriceWorker },
@@ -25,6 +26,7 @@ async function bootstrap(): Promise<void> {
   ] = await Promise.all([
     import("./src/server/websocket/index.js"),
     import("./src/server/jobs/auction-closer.js"),
+    import("./src/server/jobs/drop-lottery-closer.js"),
     import("./src/server/jobs/drop-scheduler.js"),
     import("./src/server/jobs/price-poller.js"),
     import("./src/server/jobs/price-worker.js"),
@@ -67,7 +69,7 @@ async function bootstrap(): Promise<void> {
 
   await warmInfrastructure();
 
-  const stopJobs: JobStopper[] = [startAuctionCloser(), startDropScheduler()];
+  const stopJobs: JobStopper[] = [startAuctionCloser(), startDropLotteryCloser(), startDropScheduler()];
   if (PRICE_SCHEDULER_ENABLED) {
     stopJobs.push(startPricePoller());
   }

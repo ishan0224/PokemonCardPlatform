@@ -140,7 +140,8 @@ export const AUCTIONS_LIST_COALESCE_WINDOW_MS = resolveIntegerEnv(process.env.AU
 export const AUCTIONS_LIST_COALESCE_MAX_BUFFER = resolveIntegerEnv(process.env.AUCTIONS_LIST_COALESCE_MAX_BUFFER, 500);
 
 export const RATE_LIMITS = {
-  packPurchase: { limit: 5, windowSeconds: 10 },
+  packPurchasePerUser: { limit: 5, windowSeconds: 10 },
+  packPurchasePerIp: { limit: 5, windowSeconds: 10 },
   placeBid: { limit: 10, windowSeconds: 10 },
   buyListing: { limit: 5, windowSeconds: 10 }
 } as const;
