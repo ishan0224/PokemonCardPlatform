@@ -157,6 +157,51 @@ export interface AuctionSnipeMetrics {
   bidsInFinal10Pct: BidsInFinal10PctMetric;
 }
 
+export type FairnessAuditRunSource = "nightly" | "on_demand";
+
+export interface FairnessAuditResult {
+  id: UUID;
+  windowStartIso: string;
+  windowEndIso: string;
+  observedCounts: Record<RarityTier, number>;
+  expectedCounts: Record<RarityTier, number>;
+  testStatistic: number;
+  degreesOfFreedom: number;
+  pValue: number;
+  runSource: FairnessAuditRunSource;
+  ranAtIso: string;
+  sampleSize: number;
+  monteCarloApplied: boolean;
+  monteCarloSamples: number | null;
+  monteCarloExtremeCount: number | null;
+}
+
+export interface UserHealthMetrics {
+  dropEngagement: {
+    purchasesPerUserAvg: number;
+    selloutTimeAvgSeconds: number | null;
+    dropfillDistribution: {
+      lt25: number;
+      gte25Lt50: number;
+      gte50Lt75: number;
+      gte75: number;
+    };
+  };
+  auctionParticipation: {
+    bidsPerAuctionAvg: number;
+    uniqueBiddersPerAuctionAvg: number;
+    watcherCountAvg: number | null;
+    watcherCountMetricSource: "auction_watcher_samples" | "not_collected";
+  };
+  retention: {
+    cohortBuyerCount: number;
+    d1ReturningBuyerCount: number;
+    d7ReturningBuyerCount: number;
+    d1Rate: number;
+    d7Rate: number;
+  };
+}
+
 export interface PackEconomicsBundle {
   window: EconomicsWindow;
   generatedAtIso: string;
@@ -171,6 +216,32 @@ export interface PackEconomicsBundle {
   topAuctions: TopAuction[];
   integrity: IntegrityChecks;
   auctionSnipeMetrics: AuctionSnipeMetrics;
+  incidentDeltaBps: number;
+  rateLimitHitCount24h: number;
+  openAuctionFlagCount: number;
+  marginIncidentCount24h: number;
+  verificationUsageDistinctUsers7d: number;
+  userHealth: UserHealthMetrics;
+}
+
+export interface AdminMetricsDeltaEvent {
+  rateLimitHitCountDelta: number;
+  openAuctionFlagCountDelta: number;
+  marginIncidentCountDelta: number;
+  emittedAtIso: string;
+}
+
+export type AuctionFlagResolution = "dismissed" | "actioned";
+
+export interface AuctionFlagReviewItem {
+  id: UUID;
+  auctionId: UUID;
+  flagType: string;
+  evidence: Record<string, unknown>;
+  createdAtIso: string;
+  resolvedAtIso: string | null;
+  resolvedBy: UUID | null;
+  resolution: AuctionFlagResolution | null;
 }
 
 export interface EconomicsSimulationTier {

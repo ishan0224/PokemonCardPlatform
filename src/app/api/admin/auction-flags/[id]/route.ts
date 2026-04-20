@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { handleRouteError, readJsonBody, requireUuid } from "@/server/http/api";
 import { requireAdmin } from "@/server/middleware/admin";
 import {
+  mapAuctionFlagRowWithLegacyAliases,
   parseAuctionFlagResolutionBody,
   resolveAuctionFlag
 } from "@/server/services/auction-flag.service";
@@ -22,7 +23,7 @@ export async function PATCH(
       resolution
     });
 
-    return NextResponse.json({ flag }, { status: 200 });
+    return NextResponse.json({ flag: mapAuctionFlagRowWithLegacyAliases(flag) }, { status: 200 });
   } catch (error) {
     return handleRouteError(error);
   }

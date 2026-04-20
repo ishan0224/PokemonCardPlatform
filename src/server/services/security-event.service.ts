@@ -1,5 +1,6 @@
 import type { QueryResult, QueryResultRow } from "pg";
 import { query } from "../db/pool";
+import { emitAdminMetricsDeltaFireAndForget } from "../websocket/admin-metrics-coalescer";
 
 type Queryable = {
   query<T extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]): Promise<QueryResult<T>>;
@@ -32,6 +33,10 @@ export async function writeSecurityEvent(
       JSON.stringify(input.evidence ?? null)
     ]
   );
+
+  if (input.eventType === "rate_limit_hit") {
+    emitAdminMetricsDeltaFireAndForget({ rateLimitHitCountDelta: 1 });
+  }
 }
 
 export function writeSecurityEventFireAndForget(

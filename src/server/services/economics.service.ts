@@ -26,6 +26,7 @@ import type {
   RevenueStreamBreakdown,
   RevenueStreamKey,
   TopAuction,
+  UserHealthMetrics,
   WorstPack
 } from "../../lib/types";
 import { RARITY_TIERS } from "../../lib/types";
@@ -114,6 +115,27 @@ function bpsFromRatio(numerator: number, denominator: number): number {
 
 function absBps(value: number): number {
   return Math.abs(value);
+}
+
+function roundMetric(value: number, fractionDigits = 4): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Number(value.toFixed(fractionDigits));
+}
+
+export function isPackMarginOutsideTargetBand(input: {
+  tier: PackTier;
+  priceCents: number;
+  packMarginCents: number;
+}): boolean {
+  if (input.priceCents <= 0) {
+    return false;
+  }
+
+  const actualHouseEdgeBps = (input.packMarginCents * 10_000) / input.priceCents;
+  const targetHouseEdgeBps = TARGET_HOUSE_EDGE_BPS[input.tier];
+  return Math.abs(actualHouseEdgeBps - targetHouseEdgeBps) > ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS;
 }
 
 async function fetchRevenueByStream(params: WindowParams): Promise<{
@@ -760,11 +782,26 @@ export async function getIntegrityChecks(
 
 export async function getPackEconomicsBundle(params: WindowParams): Promise<PackEconomicsBundle> {
   const { tiers, portfolio } = await getPackEconomics(params);
-  const [worstPacks, topAuctions, integrity, auctionSnipeMetrics] = await Promise.all([
+  const [
+    worstPacks,
+    topAuctions,
+    integrity,
+    auctionSnipeMetrics,
+    rateLimitHitCount24h,
+    openAuctionFlagCount,
+    marginIncidentCount24h,
+    verificationUsageDistinctUsers7d,
+    userHealth
+  ] = await Promise.all([
     getWorstPacks(params),
     getTopAuctions(params),
     getIntegrityChecks(params, tiers),
-    getAuctionSnipeMetrics(params)
+    getAuctionSnipeMetrics(params),
+    fetchRateLimitHitCount24h(),
+    fetchOpenAuctionFlagCount(),
+    fetchMarginIncidentCount24h(),
+    fetchVerificationUsageDistinctUsers7d(),
+    getUserHealthMetrics(params)
   ]);
 
   return {
@@ -775,41 +812,281 @@ export async function getPackEconomicsBundle(params: WindowParams): Promise<Pack
     worstPacks,
     topAuctions,
     integrity,
-    auctionSnipeMetrics
+    auctionSnipeMetrics,
+    incidentDeltaBps: ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS,
+    rateLimitHitCount24h,
+    openAuctionFlagCount,
+    marginIncidentCount24h,
+    verificationUsageDistinctUsers7d,
+    userHealth
   };
 }
 
-export function buildMarginIncidentEvidence(bundle: PackEconomicsBundle): Record<string, unknown> | null {
-  const outOfBandTiers = bundle.tiers
-    .map((tier) => {
-      if (tier.actualHouseEdgeBps === null) {
-        return null;
-      }
+async function fetchRateLimitHitCount24h(): Promise<number> {
+  const result = await query<{ n: string }>(
+    `SELECT COUNT(*)::BIGINT AS n
+     FROM security_events
+     WHERE event_type = 'rate_limit_hit'
+       AND created_at >= now() - interval '24 hours'`
+  );
+  return Number(result.rows[0]?.n ?? 0);
+}
 
-      const deltaBps = Math.abs(tier.actualHouseEdgeBps - tier.targetHouseEdgeBps);
-      if (deltaBps <= ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS) {
-        return null;
-      }
+async function fetchOpenAuctionFlagCount(): Promise<number> {
+  const result = await query<{ n: string }>(
+    `SELECT COUNT(*)::BIGINT AS n
+     FROM auction_flags
+     WHERE resolved_at IS NULL`
+  );
+  return Number(result.rows[0]?.n ?? 0);
+}
 
-      return {
-        tier: tier.tier,
-        actualHouseEdgeBps: tier.actualHouseEdgeBps,
-        targetHouseEdgeBps: tier.targetHouseEdgeBps,
-        deltaBps,
-        packsPurchased: tier.packsPurchased,
-        sigmaMarginCents: tier.sigmaMarginCents
-      };
-    })
-    .filter((tier): tier is NonNullable<typeof tier> => tier !== null);
+async function fetchVerificationUsageDistinctUsers7d(): Promise<number> {
+  const result = await query<{ n: string }>(
+    `SELECT COUNT(DISTINCT user_id)::BIGINT AS n
+     FROM security_events
+     WHERE event_type = 'fairness_verification_run'
+       AND user_id IS NOT NULL
+       AND created_at >= now() - interval '7 days'`
+  );
+  return Number(result.rows[0]?.n ?? 0);
+}
 
-  if (bundle.integrity.tiersLosingMoneyCount === 0 && outOfBandTiers.length === 0) {
-    return null;
+async function fetchMarginIncidentCount24h(): Promise<number> {
+  const result = await query<{ n: string }>(
+    `SELECT COUNT(*)::BIGINT AS n
+     FROM platform_revenue pr
+     JOIN packs p ON p.id = pr.reference_id
+     WHERE pr.type = 'pack_margin'
+       AND pr.created_at >= now() - interval '24 hours'
+       AND p.price_paid > 0
+       AND ABS(
+         ((pr.amount::numeric * 10000.0) / p.price_paid::numeric)
+         - (CASE p.tier
+             WHEN 'standard' THEN $1::numeric
+             WHEN 'premium' THEN $2::numeric
+             WHEN 'elite' THEN $3::numeric
+             ELSE 0::numeric
+            END)
+       ) > $4::numeric`,
+    [
+      TARGET_HOUSE_EDGE_BPS.standard,
+      TARGET_HOUSE_EDGE_BPS.premium,
+      TARGET_HOUSE_EDGE_BPS.elite,
+      ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS
+    ]
+  );
+  return Number(result.rows[0]?.n ?? 0);
+}
+
+type WatcherMetricRow = {
+  watcher_count_avg: string | null;
+  sample_count: string;
+};
+
+async function fetchWatcherMetricRow(params: WindowParams): Promise<WatcherMetricRow> {
+  try {
+    const result = await query<WatcherMetricRow>(
+      `SELECT AVG(observed_count)::numeric(20,4) AS watcher_count_avg,
+              COUNT(*)::BIGINT AS sample_count
+       FROM auction_watcher_samples
+       WHERE sampled_at >= $1
+         AND sampled_at < $2`,
+      [params.from, params.to]
+    );
+    return result.rows[0] ?? { watcher_count_avg: null, sample_count: "0" };
+  } catch (error) {
+    const typed = error as { code?: string; message?: string };
+    if (typed.code === "42P01") {
+      console.warn(
+        `[economics] watcher telemetry unavailable (auction_watcher_samples missing): ${typed.message ?? "unknown error"}`
+      );
+      return { watcher_count_avg: null, sample_count: "0" };
+    }
+    throw error;
   }
+}
+
+async function getUserHealthMetrics(params: WindowParams): Promise<UserHealthMetrics> {
+  const [
+    dropEngagementResult,
+    selloutResult,
+    dropfillResult,
+    auctionResult,
+    watcherResult,
+    retentionResult
+  ] = await Promise.all([
+    query<{ purchases: string; buyers: string }>(
+      `SELECT COUNT(*)::BIGINT AS purchases,
+              COUNT(DISTINCT user_id)::BIGINT AS buyers
+       FROM packs
+       WHERE purchased_at >= $1
+         AND purchased_at < $2`,
+      [params.from, params.to]
+    ),
+    query<{ avg_sellout_seconds: string | null }>(
+      `WITH sold_out_drops AS (
+         SELECT dp.drop_id
+         FROM drop_packs dp
+         GROUP BY dp.drop_id
+         HAVING SUM(dp.remaining_inventory) = 0
+       ),
+       sold_out_timeline AS (
+         SELECT sod.drop_id,
+                MIN(p.purchased_at) AS first_purchased_at,
+                MAX(p.purchased_at) AS last_purchased_at
+         FROM sold_out_drops sod
+         JOIN drop_packs dp ON dp.drop_id = sod.drop_id
+         JOIN packs p ON p.drop_pack_id = dp.id
+         WHERE p.purchased_at >= $1
+           AND p.purchased_at < $2
+         GROUP BY sod.drop_id
+       )
+       SELECT AVG(EXTRACT(EPOCH FROM (last_purchased_at - first_purchased_at)))::numeric(20,4) AS avg_sellout_seconds
+       FROM sold_out_timeline`,
+      [params.from, params.to]
+    ),
+    query<{ lt25: string; gte25lt50: string; gte50lt75: string; gte75: string }>(
+      `WITH window_drops AS (
+         SELECT DISTINCT dp.drop_id
+         FROM packs p
+         JOIN drop_packs dp ON dp.id = p.drop_pack_id
+         WHERE p.purchased_at >= $1
+           AND p.purchased_at < $2
+       ),
+       fill AS (
+         SELECT wd.drop_id,
+                SUM(dp.total_inventory)::numeric AS total_inventory,
+                SUM(dp.total_inventory - dp.remaining_inventory)::numeric AS sold_inventory
+         FROM window_drops wd
+         JOIN drop_packs dp ON dp.drop_id = wd.drop_id
+         GROUP BY wd.drop_id
+       )
+       SELECT
+         COALESCE(SUM(CASE
+           WHEN total_inventory = 0 THEN 0
+           WHEN (sold_inventory / total_inventory) < 0.25 THEN 1
+           ELSE 0
+         END), 0)::BIGINT AS lt25,
+         COALESCE(SUM(CASE
+           WHEN total_inventory = 0 THEN 0
+           WHEN (sold_inventory / total_inventory) >= 0.25
+            AND (sold_inventory / total_inventory) < 0.5 THEN 1
+           ELSE 0
+         END), 0)::BIGINT AS gte25lt50,
+         COALESCE(SUM(CASE
+           WHEN total_inventory = 0 THEN 0
+           WHEN (sold_inventory / total_inventory) >= 0.5
+            AND (sold_inventory / total_inventory) < 0.75 THEN 1
+           ELSE 0
+         END), 0)::BIGINT AS gte50lt75,
+         COALESCE(SUM(CASE
+           WHEN total_inventory = 0 THEN 0
+           WHEN (sold_inventory / total_inventory) >= 0.75 THEN 1
+           ELSE 0
+         END), 0)::BIGINT AS gte75
+       FROM fill`,
+      [params.from, params.to]
+    ),
+    query<{ bids_per_auction_avg: string; unique_bidders_per_auction_avg: string }>(
+      `WITH per_auction AS (
+         SELECT b.auction_id,
+                COUNT(*)::numeric AS bid_count,
+                COUNT(DISTINCT b.bidder_id)::numeric AS unique_bidder_count
+         FROM bids b
+         WHERE b.created_at >= $1
+           AND b.created_at < $2
+         GROUP BY b.auction_id
+       )
+       SELECT COALESCE(AVG(bid_count), 0)::numeric(20,4) AS bids_per_auction_avg,
+              COALESCE(AVG(unique_bidder_count), 0)::numeric(20,4) AS unique_bidders_per_auction_avg
+       FROM per_auction`,
+      [params.from, params.to]
+    ),
+    fetchWatcherMetricRow(params),
+    query<{ cohort_buyers: string; d1_returning_buyers: string; d7_returning_buyers: string }>(
+      `WITH buyer_tx AS (
+         SELECT user_id, created_at
+         FROM transactions
+         WHERE type IN ('pack_purchase', 'trade_buy', 'auction_win')
+       ),
+       first_buyer_tx AS (
+         SELECT user_id, MIN(created_at) AS first_buyer_at
+         FROM buyer_tx
+         GROUP BY user_id
+       ),
+       cohort AS (
+         SELECT user_id, first_buyer_at
+         FROM first_buyer_tx
+         WHERE first_buyer_at >= $1
+           AND first_buyer_at < $2
+       ),
+       returns AS (
+         SELECT c.user_id,
+                EXISTS (
+                  SELECT 1
+                  FROM buyer_tx bt
+                  WHERE bt.user_id = c.user_id
+                    AND bt.created_at >= c.first_buyer_at + interval '1 day'
+                    AND bt.created_at < c.first_buyer_at + interval '2 days'
+                ) AS d1_returned,
+                EXISTS (
+                  SELECT 1
+                  FROM buyer_tx bt
+                  WHERE bt.user_id = c.user_id
+                    AND bt.created_at >= c.first_buyer_at + interval '7 days'
+                    AND bt.created_at < c.first_buyer_at + interval '8 days'
+                ) AS d7_returned
+         FROM cohort c
+       )
+       SELECT COUNT(*)::BIGINT AS cohort_buyers,
+              COALESCE(SUM(CASE WHEN d1_returned THEN 1 ELSE 0 END), 0)::BIGINT AS d1_returning_buyers,
+              COALESCE(SUM(CASE WHEN d7_returned THEN 1 ELSE 0 END), 0)::BIGINT AS d7_returning_buyers
+       FROM returns`,
+      [params.from, params.to]
+    )
+  ]);
+
+  const purchases = Number(dropEngagementResult.rows[0]?.purchases ?? 0);
+  const buyers = Number(dropEngagementResult.rows[0]?.buyers ?? 0);
+  const purchasesPerUserAvg = buyers > 0 ? purchases / buyers : 0;
+
+  const fill = dropfillResult.rows[0];
+  const auction = auctionResult.rows[0];
+  const watcher = watcherResult;
+  const retention = retentionResult.rows[0];
+
+  const cohortBuyerCount = Number(retention?.cohort_buyers ?? 0);
+  const d1ReturningBuyerCount = Number(retention?.d1_returning_buyers ?? 0);
+  const d7ReturningBuyerCount = Number(retention?.d7_returning_buyers ?? 0);
 
   return {
-    incidentDeltaBps: ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS,
-    tiersLosingMoneyCount: bundle.integrity.tiersLosingMoneyCount,
-    outOfBandTiers,
-    window: bundle.window
+    dropEngagement: {
+      purchasesPerUserAvg: roundMetric(purchasesPerUserAvg),
+      selloutTimeAvgSeconds: selloutResult.rows[0]?.avg_sellout_seconds
+        ? roundMetric(Number(selloutResult.rows[0].avg_sellout_seconds), 2)
+        : null,
+      dropfillDistribution: {
+        lt25: Number(fill?.lt25 ?? 0),
+        gte25Lt50: Number(fill?.gte25lt50 ?? 0),
+        gte50Lt75: Number(fill?.gte50lt75 ?? 0),
+        gte75: Number(fill?.gte75 ?? 0)
+      }
+    },
+    auctionParticipation: {
+      bidsPerAuctionAvg: roundMetric(Number(auction?.bids_per_auction_avg ?? 0)),
+      uniqueBiddersPerAuctionAvg: roundMetric(Number(auction?.unique_bidders_per_auction_avg ?? 0)),
+      watcherCountAvg: watcher?.watcher_count_avg !== null && watcher?.watcher_count_avg !== undefined
+        ? roundMetric(Number(watcher.watcher_count_avg))
+        : null,
+      watcherCountMetricSource: Number(watcher?.sample_count ?? 0) > 0 ? "auction_watcher_samples" : "not_collected"
+    },
+    retention: {
+      cohortBuyerCount,
+      d1ReturningBuyerCount,
+      d7ReturningBuyerCount,
+      d1Rate: cohortBuyerCount > 0 ? roundMetric(d1ReturningBuyerCount / cohortBuyerCount) : 0,
+      d7Rate: cohortBuyerCount > 0 ? roundMetric(d7ReturningBuyerCount / cohortBuyerCount) : 0
+    }
   };
 }

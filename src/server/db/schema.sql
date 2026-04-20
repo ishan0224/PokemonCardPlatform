@@ -366,6 +366,19 @@ CREATE TABLE IF NOT EXISTS bids (
 
 CREATE INDEX IF NOT EXISTS idx_bids_auction_id ON bids (auction_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS auction_watcher_samples (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    auction_id      UUID NOT NULL REFERENCES auctions(id),
+    observed_count  INT NOT NULL CHECK (observed_count >= 0),
+    sampled_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_auction_watcher_samples_sampled_at
+ON auction_watcher_samples (sampled_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_auction_watcher_samples_auction_sampled
+ON auction_watcher_samples (auction_id, sampled_at DESC);
+
 CREATE TABLE IF NOT EXISTS auction_flags (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     auction_id      UUID NOT NULL REFERENCES auctions(id),

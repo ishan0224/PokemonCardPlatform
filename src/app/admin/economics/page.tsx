@@ -2,8 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiClientError, apiClient, mapApiErrorToMessage } from "@/lib/api-client";
-import type { EconomicsSummary, PackEconomicsBundle } from "@/lib/types";
+import type {
+  AdminMetricsDeltaEvent,
+  EconomicsSummary,
+  FairnessAuditResult,
+  PackEconomicsBundle
+} from "@/lib/types";
 import { useAuth } from "@/hooks/use-auth";
+import { useAdminMetricsRoom } from "@/hooks/use-socket";
 import { EconomicsHeader, type WindowPreset } from "@/components/admin/economics-header";
 import { EconomicsIncidentBanner } from "@/components/admin/economics-incident-banner";
 import { EconomicsKpiStrip } from "@/components/admin/economics-kpi-strip";
@@ -14,6 +20,8 @@ import { TopAuctionsList } from "@/components/admin/top-auctions-list";
 import { StatusPanel } from "@/components/admin/status-panel";
 import { WorstPacksList } from "@/components/admin/worst-packs-list";
 import { WhatIfSimulatorStub } from "@/components/admin/what-if-simulator-stub";
+import { formatPlainPercentBps } from "@/lib/format";
+import { RARITY_TIERS } from "@/lib/types";
 
 const PRESET_DURATION_MS: Record<WindowPreset, number> = {
   "1h": 60 * 60 * 1000,
@@ -22,15 +30,25 @@ const PRESET_DURATION_MS: Record<WindowPreset, number> = {
   "31d": 31 * 24 * 60 * 60 * 1000
 };
 
-const INCIDENT_DELTA_BPS_DEFAULT = 1_000;
-
 type EconomicsState = {
   summary: EconomicsSummary | null;
   bundle: PackEconomicsBundle | null;
+  fairnessLatestAudit: FairnessAuditResult | null;
+  fairnessNightlyAudit: FairnessAuditResult | null;
+  fairnessOnDemandPreview: FairnessAuditResult | null;
+  fairnessWarning: string | null;
   loading: boolean;
   error: string | null;
   forbidden: boolean;
 };
+
+function clampNonNegative(value: number): number {
+  return value < 0 ? 0 : value;
+}
+
+function formatRate(value: number): string {
+  return `${(value * 100).toFixed(1)}%`;
+}
 
 function resolveWindow(preset: WindowPreset): { fromIso: string; toIso: string } {
   const toIso = new Date().toISOString();
@@ -45,22 +63,51 @@ export default function AdminEconomicsPage(): JSX.Element {
   const [state, setState] = useState<EconomicsState>({
     summary: null,
     bundle: null,
+    fairnessLatestAudit: null,
+    fairnessNightlyAudit: null,
+    fairnessOnDemandPreview: null,
+    fairnessWarning: null,
     loading: false,
     error: null,
     forbidden: false
   });
+  const [rerunningFairness, setRerunningFairness] = useState(false);
+
+  const loadFairnessAudit = useCallback(
+    async (
+      source: "latest" | "nightly",
+      signal?: AbortSignal
+    ): Promise<{ audit: FairnessAuditResult | null; warning: string | null }> => {
+      try {
+        const result = await apiClient.getFairnessAudit({ window: "7d", source }, signal);
+        return { audit: result.audit, warning: null };
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) {
+          return { audit: null, warning: null };
+        }
+        throw error;
+      }
+    },
+    []
+  );
 
   const fetchData = useCallback(
     async (range: { fromIso: string; toIso: string }, signal?: AbortSignal): Promise<void> => {
       setState((prev) => ({ ...prev, loading: true, error: null, forbidden: false }));
       try {
-        const [summaryResult, packResult] = await Promise.all([
+        const [summaryResult, packResult, fairnessLatestResult, fairnessNightlyResult] = await Promise.all([
           apiClient.getEconomicsSummary(range, signal),
-          apiClient.getPackEconomics(range, signal)
+          apiClient.getPackEconomics(range, signal),
+          loadFairnessAudit("latest", signal),
+          loadFairnessAudit("nightly", signal)
         ]);
         setState({
           summary: summaryResult.summary,
           bundle: packResult.bundle,
+          fairnessLatestAudit: fairnessLatestResult.audit,
+          fairnessNightlyAudit: fairnessNightlyResult.audit,
+          fairnessOnDemandPreview: null,
+          fairnessWarning: fairnessLatestResult.warning ?? fairnessNightlyResult.warning,
           loading: false,
           error: null,
           forbidden: false
@@ -73,13 +120,17 @@ export default function AdminEconomicsPage(): JSX.Element {
         setState({
           summary: null,
           bundle: null,
+          fairnessLatestAudit: null,
+          fairnessNightlyAudit: null,
+          fairnessOnDemandPreview: null,
+          fairnessWarning: null,
           loading: false,
           error: mapApiErrorToMessage(error) || "Failed to load economics data.",
           forbidden
         });
       }
     },
-    []
+    [loadFairnessAudit]
   );
 
   useEffect(() => {
@@ -99,7 +150,58 @@ export default function AdminEconomicsPage(): JSX.Element {
     void fetchData(range);
   }, [preset, fetchData]);
 
+  const handleFairnessRerun = useCallback(async (): Promise<void> => {
+    setRerunningFairness(true);
+    try {
+      const result = await apiClient.rerunFairnessAudit();
+      setState((prev) => ({
+        ...prev,
+        fairnessOnDemandPreview: result.audit,
+        fairnessWarning: result.warning
+      }));
+    } catch (error) {
+      setState((prev) => ({
+        ...prev,
+        error: mapApiErrorToMessage(error) || "Failed to rerun fairness audit."
+      }));
+    } finally {
+      setRerunningFairness(false);
+    }
+  }, []);
+
+  useAdminMetricsRoom(user?.role === "admin", {
+    onMetricsDelta: (event: AdminMetricsDeltaEvent) => {
+      setState((prev) => {
+        if (!prev.bundle) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          bundle: {
+            ...prev.bundle,
+            rateLimitHitCount24h: clampNonNegative(
+              prev.bundle.rateLimitHitCount24h + event.rateLimitHitCountDelta
+            ),
+            openAuctionFlagCount: clampNonNegative(
+              prev.bundle.openAuctionFlagCount + event.openAuctionFlagCountDelta
+            ),
+            marginIncidentCount24h: clampNonNegative(
+              prev.bundle.marginIncidentCount24h + event.marginIncidentCountDelta
+            )
+          }
+        };
+      });
+    },
+    onConnected: () => {
+      void fetchData(windowRange).catch((error) => {
+        console.error("Failed to reconcile admin metrics after reconnect:", error);
+      });
+    }
+  });
+
   const canRender = state.summary !== null && state.bundle !== null;
+  const authoritativeFairnessAudit = state.fairnessNightlyAudit ?? state.fairnessLatestAudit;
 
   const footerProvenance = useMemo(() => {
     if (!state.summary) {
@@ -171,10 +273,232 @@ export default function AdminEconomicsPage(): JSX.Element {
           <EconomicsIncidentBanner
             tiers={state.bundle.tiers}
             tiersLosingMoneyCount={state.bundle.integrity.tiersLosingMoneyCount}
-            incidentDeltaBps={INCIDENT_DELTA_BPS_DEFAULT}
+            incidentDeltaBps={state.bundle.incidentDeltaBps}
           />
 
           <EconomicsKpiStrip summary={state.summary} tiers={state.bundle.tiers} />
+
+          <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Rate-limit Denies · 24h</p>
+              <p className="mt-2 text-3xl font-black tracking-tight text-slate-950">
+                {state.bundle.rateLimitHitCount24h.toLocaleString()}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">Live via admin:metrics coalescer</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Open Auction Flags</p>
+              <p className="mt-2 text-3xl font-black tracking-tight text-slate-950">
+                {state.bundle.openAuctionFlagCount.toLocaleString()}
+              </p>
+              <a
+                href="/admin/auction-flags"
+                className="mt-1 inline-block text-xs font-medium text-indigo-700 underline decoration-indigo-300 underline-offset-2"
+              >
+                Review list
+              </a>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Margin Incidents · 24h</p>
+              <p className="mt-2 text-3xl font-black tracking-tight text-slate-950">
+                {state.bundle.marginIncidentCount24h.toLocaleString()}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                threshold ±{formatPlainPercentBps(state.bundle.incidentDeltaBps)}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Verification Usage · 7d</p>
+              <p className="mt-2 text-3xl font-black tracking-tight text-slate-950">
+                {state.bundle.verificationUsageDistinctUsers7d.toLocaleString()}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">Distinct users running fairness verification</p>
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-slate-200 bg-white p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Fairness Audit</p>
+                <h2 className="mt-1 text-xl font-black tracking-tight text-slate-950">
+                  Chi-squared goodness-of-fit
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleFairnessRerun()}
+                disabled={rerunningFairness}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {rerunningFairness ? "Running…" : "Force rerun"}
+              </button>
+            </div>
+
+            {state.fairnessWarning ? (
+              <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                {state.fairnessWarning}
+              </p>
+            ) : null}
+
+            {state.fairnessOnDemandPreview ? (
+              <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+                On-demand preview (approximate): p-value {state.fairnessOnDemandPreview.pValue.toFixed(6)} · χ²{" "}
+                {state.fairnessOnDemandPreview.testStatistic.toFixed(4)} · df{" "}
+                {state.fairnessOnDemandPreview.degreesOfFreedom}
+              </div>
+            ) : null}
+
+            {authoritativeFairnessAudit ? (
+              <>
+                <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                  Authoritative audit source:{" "}
+                  <span className="font-semibold">
+                    {state.fairnessNightlyAudit ? "nightly" : `${authoritativeFairnessAudit.runSource} (fallback)`}
+                  </span>
+                </div>
+                <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-[11px] text-slate-500">Audit window</p>
+                    <p className="mt-1 font-mono text-xs text-slate-800">
+                      {authoritativeFairnessAudit.windowStartIso}
+                    </p>
+                    <p className="font-mono text-xs text-slate-800">{authoritativeFairnessAudit.windowEndIso}</p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-[11px] text-slate-500">p-value</p>
+                    <p className="mt-1 text-lg font-black text-slate-950">
+                      {authoritativeFairnessAudit.pValue.toFixed(6)}
+                    </p>
+                    <p className="text-[11px] text-slate-500">
+                      χ²={authoritativeFairnessAudit.testStatistic.toFixed(4)} · df={authoritativeFairnessAudit.degreesOfFreedom}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-[11px] text-slate-500">Run source</p>
+                    <p className="mt-1 text-sm font-bold uppercase tracking-wide text-slate-900">
+                      {authoritativeFairnessAudit.runSource}
+                    </p>
+                    <p className="text-[11px] text-slate-500">{authoritativeFairnessAudit.ranAtIso}</p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-[11px] text-slate-500">Sample size</p>
+                    <p className="mt-1 text-lg font-black text-slate-950">
+                      {authoritativeFairnessAudit.sampleSize.toLocaleString()} packs
+                    </p>
+                    <p className="text-[11px] text-slate-500">
+                      MC applied: {authoritativeFairnessAudit.monteCarloApplied ? "yes" : "no"}
+                    </p>
+                    {authoritativeFairnessAudit.monteCarloApplied ? (
+                      <p className="text-[11px] text-slate-500">
+                        MC samples: {authoritativeFairnessAudit.monteCarloSamples?.toLocaleString()}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="rounded-xl border border-slate-200 p-4">
+                    <h3 className="text-sm font-bold text-slate-900">Observed counts (per rarity)</h3>
+                    <ul className="mt-2 space-y-1 text-sm text-slate-700">
+                      {RARITY_TIERS.map((rarity) => (
+                        <li key={`obs-${rarity}`} className="flex items-center justify-between">
+                          <span className="font-mono text-xs uppercase text-slate-500">{rarity}</span>
+                          <span className="tabular-nums">
+                            {authoritativeFairnessAudit.observedCounts[rarity].toLocaleString()}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 p-4">
+                    <h3 className="text-sm font-bold text-slate-900">Expected counts (per rarity)</h3>
+                    <ul className="mt-2 space-y-1 text-sm text-slate-700">
+                      {RARITY_TIERS.map((rarity) => (
+                        <li key={`exp-${rarity}`} className="flex items-center justify-between">
+                          <span className="font-mono text-xs uppercase text-slate-500">{rarity}</span>
+                          <span className="tabular-nums">
+                            {authoritativeFairnessAudit.expectedCounts[rarity].toFixed(2)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <p className="mt-4 text-sm text-slate-500">No fairness audit result yet. Run on-demand to create one.</p>
+            )}
+          </section>
+
+          <section className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Drop Engagement</p>
+              <p className="mt-2 text-sm text-slate-600">
+                purchases/user avg{" "}
+                <span className="font-semibold text-slate-900">
+                  {state.bundle.userHealth.dropEngagement.purchasesPerUserAvg.toFixed(2)}
+                </span>
+              </p>
+              <p className="mt-1 text-sm text-slate-600">
+                sellout avg{" "}
+                <span className="font-semibold text-slate-900">
+                  {state.bundle.userHealth.dropEngagement.selloutTimeAvgSeconds === null
+                    ? "n/a"
+                    : `${Math.round(state.bundle.userHealth.dropEngagement.selloutTimeAvgSeconds)}s`}
+                </span>
+              </p>
+              <p className="mt-2 text-xs text-slate-500">
+                fill buckets · &lt;25% {state.bundle.userHealth.dropEngagement.dropfillDistribution.lt25} ·
+                25-50% {state.bundle.userHealth.dropEngagement.dropfillDistribution.gte25Lt50} ·
+                50-75% {state.bundle.userHealth.dropEngagement.dropfillDistribution.gte50Lt75} ·
+                ≥75% {state.bundle.userHealth.dropEngagement.dropfillDistribution.gte75}
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Auction Participation</p>
+              <p className="mt-2 text-sm text-slate-600">
+                bids/auction avg{" "}
+                <span className="font-semibold text-slate-900">
+                  {state.bundle.userHealth.auctionParticipation.bidsPerAuctionAvg.toFixed(2)}
+                </span>
+              </p>
+              <p className="mt-1 text-sm text-slate-600">
+                unique bidders/auction avg{" "}
+                <span className="font-semibold text-slate-900">
+                  {state.bundle.userHealth.auctionParticipation.uniqueBiddersPerAuctionAvg.toFixed(2)}
+                </span>
+              </p>
+              <p className="mt-2 text-xs text-slate-500">
+                watcher count avg: {state.bundle.userHealth.auctionParticipation.watcherCountAvg ?? "n/a"} (
+                {state.bundle.userHealth.auctionParticipation.watcherCountMetricSource})
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Retention</p>
+              <p className="mt-2 text-sm text-slate-600">
+                cohort buyers{" "}
+                <span className="font-semibold text-slate-900">
+                  {state.bundle.userHealth.retention.cohortBuyerCount.toLocaleString()}
+                </span>
+              </p>
+              <p className="mt-1 text-sm text-slate-600">
+                D1 returning{" "}
+                <span className="font-semibold text-slate-900">
+                  {state.bundle.userHealth.retention.d1ReturningBuyerCount.toLocaleString()} (
+                  {formatRate(state.bundle.userHealth.retention.d1Rate)})
+                </span>
+              </p>
+              <p className="mt-1 text-sm text-slate-600">
+                D7 returning{" "}
+                <span className="font-semibold text-slate-900">
+                  {state.bundle.userHealth.retention.d7ReturningBuyerCount.toLocaleString()} (
+                  {formatRate(state.bundle.userHealth.retention.d7Rate)})
+                </span>
+              </p>
+            </div>
+          </section>
 
           <section className="grid grid-cols-1 gap-4 xl:grid-cols-[2fr_1fr]">
             <div className="rounded-2xl border border-slate-200 bg-white p-6">

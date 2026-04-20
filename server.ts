@@ -16,25 +16,31 @@ async function bootstrap(): Promise<void> {
     { startAuctionCloser },
     { startDropLotteryCloser },
     { startDropScheduler },
+    { startFairnessAuditor },
     { startPricePoller },
     { startPriceWorker },
     { closeDatabasePool, pingDatabase },
     { closeRedisClients, pingRedis },
     { PRICE_SCHEDULER_ENABLED, PRICE_WORKER_ENABLED },
     { flushPriceUpdateCoalescer },
-    { flushAuctionsListCoalescer }
+    { flushAuctionsListCoalescer },
+    { flushAdminMetricsCoalescer },
+    { flushAuctionWatcherMetricsSamples }
   ] = await Promise.all([
     import("./src/server/websocket/index.js"),
     import("./src/server/jobs/auction-closer.js"),
     import("./src/server/jobs/drop-lottery-closer.js"),
     import("./src/server/jobs/drop-scheduler.js"),
+    import("./src/server/jobs/fairness-auditor.js"),
     import("./src/server/jobs/price-poller.js"),
     import("./src/server/jobs/price-worker.js"),
     import("./src/server/db/pool.js"),
     import("./src/server/redis/client.js"),
     import("./src/server/config/constants.js"),
     import("./src/server/services/price.service.js"),
-    import("./src/server/websocket/auctions-list-coalescer.js")
+    import("./src/server/websocket/auctions-list-coalescer.js"),
+    import("./src/server/websocket/admin-metrics-coalescer.js"),
+    import("./src/server/services/auction-watcher-metrics.service.js")
   ]);
 
   const warmInfrastructure = async (): Promise<void> => {
@@ -69,7 +75,12 @@ async function bootstrap(): Promise<void> {
 
   await warmInfrastructure();
 
-  const stopJobs: JobStopper[] = [startAuctionCloser(), startDropLotteryCloser(), startDropScheduler()];
+  const stopJobs: JobStopper[] = [
+    startAuctionCloser(),
+    startDropLotteryCloser(),
+    startDropScheduler(),
+    startFairnessAuditor()
+  ];
   if (PRICE_SCHEDULER_ENABLED) {
     stopJobs.push(startPricePoller());
   }
@@ -92,6 +103,8 @@ async function bootstrap(): Promise<void> {
       await Promise.allSettled(stopJobs.map((stop) => stop()));
       await flushPriceUpdateCoalescer();
       await flushAuctionsListCoalescer(io);
+      await flushAdminMetricsCoalescer(io);
+      await flushAuctionWatcherMetricsSamples();
 
       await new Promise<void>((resolve) => {
         io.close(() => resolve());

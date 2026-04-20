@@ -3,7 +3,8 @@ export const roomNames = {
   auction: (auctionId: string) => `auction:${auctionId}`,
   auctions: () => "auctions",
   portfolio: (userId: string) => `portfolio:${userId}`,
-  marketplace: () => "marketplace"
+  marketplace: () => "marketplace",
+  adminMetrics: () => "admin:metrics"
 };
 
 export function isPublicRoom(room: string): boolean {
@@ -26,10 +27,22 @@ export function isPublicRoom(room: string): boolean {
   return false;
 }
 
-export function canJoinPrivateRoom(room: string, userId: string | null): boolean {
+export function canJoinPrivateRoom(
+  room: string,
+  userId: string | null,
+  userRole?: "user" | "admin" | null
+): boolean {
   if (!userId) {
     return false;
   }
 
-  return room === roomNames.portfolio(userId);
+  if (room === roomNames.portfolio(userId)) {
+    return true;
+  }
+
+  if (room === roomNames.adminMetrics()) {
+    return userRole === "admin";
+  }
+
+  return false;
 }

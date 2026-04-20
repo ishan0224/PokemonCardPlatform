@@ -1,4 +1,6 @@
 import type {
+  AuctionFlagResolution,
+  AuctionFlagReviewItem,
   AuctionDurationType,
   AuctionStatus,
   CardState,
@@ -7,6 +9,7 @@ import type {
   EconomicsRebalanceResult,
   EconomicsSimulation,
   EconomicsSummary,
+  FairnessAuditResult,
   ListingStatus,
   PackEconomicsBundle,
   PackTier,
@@ -620,6 +623,61 @@ export const apiClient = {
     const query = params.toString();
     return requestJson(`/api/admin/economics/packs${query ? `?${query}` : ""}`, {
       method: "GET",
+      signal
+    });
+  },
+
+  getFairnessAudit(
+    input: { window?: string; source?: "latest" | "nightly" } = {},
+    signal?: AbortSignal
+  ): Promise<{ audit: FairnessAuditResult }> {
+    const params = new URLSearchParams();
+    if (input.window) {
+      params.set("window", input.window);
+    }
+    if (input.source === "nightly") {
+      params.set("source", "nightly");
+    }
+    const query = params.toString();
+    return requestJson(`/api/admin/fairness/audit${query ? `?${query}` : ""}`, {
+      method: "GET",
+      signal
+    });
+  },
+
+  rerunFairnessAudit(signal?: AbortSignal): Promise<{ audit: FairnessAuditResult; warning: string }> {
+    return requestJson("/api/admin/fairness/audit/rerun", {
+      method: "POST",
+      signal
+    });
+  },
+
+  listAuctionFlags(
+    input: { status?: "open" | "resolved" | "all"; limit?: number } = {},
+    signal?: AbortSignal
+  ): Promise<{ flags: AuctionFlagReviewItem[] }> {
+    const params = new URLSearchParams();
+    if (input.status) {
+      params.set("status", input.status);
+    }
+    if (typeof input.limit === "number") {
+      params.set("limit", String(input.limit));
+    }
+    const query = params.toString();
+    return requestJson(`/api/admin/auction-flags${query ? `?${query}` : ""}`, {
+      method: "GET",
+      signal
+    });
+  },
+
+  resolveAuctionFlag(
+    flagId: string,
+    resolution: AuctionFlagResolution,
+    signal?: AbortSignal
+  ): Promise<{ flag: AuctionFlagReviewItem }> {
+    return requestJson(`/api/admin/auction-flags/${flagId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ resolution }),
       signal
     });
   },

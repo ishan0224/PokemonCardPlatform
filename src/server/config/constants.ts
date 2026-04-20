@@ -137,6 +137,23 @@ export const PRICE_UPDATES_LEGACY_CHANNEL = "price_events";
 export const AUCTIONS_LIST_COALESCING_ENABLED = resolveBooleanEnv(process.env.AUCTIONS_LIST_COALESCING_ENABLED, false);
 export const AUCTIONS_LIST_COALESCE_WINDOW_MS = resolveIntegerEnv(process.env.AUCTIONS_LIST_COALESCE_WINDOW_MS, 300);
 export const AUCTIONS_LIST_COALESCE_MAX_BUFFER = resolveIntegerEnv(process.env.AUCTIONS_LIST_COALESCE_MAX_BUFFER, 500);
+export const ADMIN_METRICS_COALESCING_ENABLED = resolveBooleanEnv(
+  process.env.ADMIN_METRICS_COALESCING_ENABLED,
+  true
+);
+export const ADMIN_METRICS_COALESCE_WINDOW_MS = resolveIntegerEnv(
+  process.env.ADMIN_METRICS_COALESCE_WINDOW_MS,
+  500
+);
+export const ADMIN_METRICS_COALESCE_MAX_BUFFER = resolveIntegerEnv(
+  process.env.ADMIN_METRICS_COALESCE_MAX_BUFFER,
+  200
+);
+export const FAIRNESS_AUDITOR_ENABLED = resolveBooleanEnv(process.env.FAIRNESS_AUDITOR_ENABLED, true);
+export const FAIRNESS_AUDITOR_INTERVAL_MS = resolveIntegerEnv(
+  process.env.FAIRNESS_AUDITOR_INTERVAL_MS,
+  24 * 60 * 60 * 1000
+);
 
 export const RATE_LIMITS = {
   packPurchasePerUser: { limit: 5, windowSeconds: 10 },

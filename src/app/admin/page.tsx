@@ -45,6 +45,11 @@ export default function AdminLandingPage(): JSX.Element {
           description="Revenue streams, pack margin, per-tier EV, and integrity."
           href="/admin/economics"
         />
+        <AdminToolCard
+          title="Auction Flags"
+          description="Review open auction abuse/suspicion flags and resolve triage outcomes."
+          href="/admin/auction-flags"
+        />
       </section>
     </div>
   );
