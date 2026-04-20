@@ -7,9 +7,10 @@ import { placeBid } from "@/server/services/auction.service";
 
 type PlaceBidBody = {
   amount: number;
+  confirmHighBid?: boolean;
 };
 
-function validatePlaceBidBody(payload: PlaceBidBody): { amount: number } {
+function validatePlaceBidBody(payload: PlaceBidBody): { amount: number; confirmHighBid: boolean } {
   if (!payload || typeof payload !== "object") {
     throw new ApiRouteError("Body is required.", 400, "INVALID_BODY");
   }
@@ -20,8 +21,11 @@ function validatePlaceBidBody(payload: PlaceBidBody): { amount: number } {
     throw new ApiRouteError("Bid amount must be a positive number in cents.", 400, "INVALID_BID_AMOUNT");
   }
 
+  const confirmHighBid = payload.confirmHighBid === true;
+
   return {
-    amount: Math.trunc(amount)
+    amount: Math.trunc(amount),
+    confirmHighBid
   };
 }
 
@@ -33,16 +37,25 @@ export async function POST(
     const auctionId = requireUuid(context.params.id, "Auction ID");
     const authUser = await requireAuth(request);
 
+    // Existing IP-scoped bid throttle preserved.
     await enforceRateLimit({
       key: `auction:bid:${authUser.userId}:${auctionId}:${getClientIp(request)}`,
       ...RATE_LIMITS.placeBid
+    });
+
+    // Phase 5 B3 per-auction-per-bidder throttle (3 / 10s) — source plan §448.
+    // Separate from the existing throttle; it does not replace it.
+    await enforceRateLimit({
+      key: `bid:auction:${auctionId}:user:${authUser.userId}`,
+      ...RATE_LIMITS.placeBidPerAuctionPerUser
     });
 
     const body = validatePlaceBidBody(await readJsonBody<PlaceBidBody>(request));
     const result = await placeBid({
       bidderId: authUser.userId,
       auctionId,
-      amount: body.amount
+      amount: body.amount,
+      confirmHighBid: body.confirmHighBid
     });
 
     return NextResponse.json(result, { status: 200 });

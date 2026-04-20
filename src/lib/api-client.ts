@@ -568,16 +568,23 @@ export const apiClient = {
   placeBid(
     auctionId: string,
     amount: number,
-    signal?: AbortSignal
+    options?: { confirmHighBid?: boolean; signal?: AbortSignal }
   ): Promise<{
     auction: AuctionDetail;
     bid: AuctionBid;
     timeExtended: boolean;
   }> {
+    // Phase 5 B3: confirmHighBid is opt-in for bypassing the suspicious
+    // ceiling. Only serialize the field when explicitly true — the server
+    // already treats missing/false identically, keeping the wire minimal.
+    const body: { amount: number; confirmHighBid?: true } = { amount };
+    if (options?.confirmHighBid === true) {
+      body.confirmHighBid = true;
+    }
     return requestJson(`/api/auctions/${auctionId}/bid`, {
       method: "POST",
-      body: JSON.stringify({ amount }),
-      signal
+      body: JSON.stringify(body),
+      signal: options?.signal
     });
   },
 

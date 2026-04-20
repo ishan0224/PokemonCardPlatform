@@ -2,6 +2,7 @@ import Decimal from "decimal.js";
 import { ApiRouteError } from "../http/api";
 import { query } from "../db/pool";
 import { PACK_TIER_CONFIGS, PACK_TIERS } from "../config/pack-tiers";
+import { getAuctionSnipeMetrics } from "./auction-snipe-metrics.service";
 import {
   AUCTION_FEE_BPS,
   ECONOMICS_DEFAULT_WINDOW_HOURS,
@@ -759,10 +760,11 @@ export async function getIntegrityChecks(
 
 export async function getPackEconomicsBundle(params: WindowParams): Promise<PackEconomicsBundle> {
   const { tiers, portfolio } = await getPackEconomics(params);
-  const [worstPacks, topAuctions, integrity] = await Promise.all([
+  const [worstPacks, topAuctions, integrity, auctionSnipeMetrics] = await Promise.all([
     getWorstPacks(params),
     getTopAuctions(params),
-    getIntegrityChecks(params, tiers)
+    getIntegrityChecks(params, tiers),
+    getAuctionSnipeMetrics(params)
   ]);
 
   return {
@@ -772,7 +774,8 @@ export async function getPackEconomicsBundle(params: WindowParams): Promise<Pack
     portfolio,
     worstPacks,
     topAuctions,
-    integrity
+    integrity,
+    auctionSnipeMetrics
   };
 }
 

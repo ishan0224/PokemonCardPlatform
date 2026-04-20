@@ -31,6 +31,8 @@
     "test:partb:phase3:all": "npm run test:partb:phase3 && npm run test:partb:phase3:integration",
     "test:partb:phase4:runtime": "node --import tsx scripts/test-partb-phase4-runtime.ts",
     "test:partb:phase4:runtime:lite": "PARTB_PHASE4_BURST_PARTICIPANT_COUNT=10 PARTB_PHASE4_MAIN_DROP_INVENTORY=3 PARTB_PHASE4_POST_WINDOW_PARTICIPANT_COUNT=3 PARTB_PHASE4_UNIFORMITY_TRIAL_COUNT=4 PARTB_PHASE4_UNIFORMITY_PARTICIPANT_COUNT=6 PARTB_PHASE4_UNIFORMITY_COHORT_SIZE=2 node --import tsx scripts/test-partb-phase4-runtime.ts",
+    "test:partb:phase5:runtime": "node --import tsx scripts/test-partb-phase5-runtime.ts",
+    "test:partb:phase5:runtime:lite": "PARTB_PHASE5_BIDDERS=3 PARTB_PHASE5_SOFTCLOSE_TRIALS=6 node --import tsx scripts/test-partb-phase5-runtime.ts",
     "test:n1:unit": "node --import tsx scripts/test-n1-deterministic.ts",
     "test:n1:hardening": "node --import tsx scripts/test-n1-hardening.ts",
     "test:n1:concurrency": "node --import tsx scripts/test-n1-concurrency-smoke.ts",

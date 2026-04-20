@@ -6,7 +6,13 @@ import { useEffect, useState } from "react";
 import { useAuction } from "@/hooks/use-auction";
 import { useAuth } from "@/hooks/use-auth";
 import { useCountdown } from "@/hooks/use-countdown";
+import { ApiClientError } from "@/lib/api-client";
 import { formatDateTime, formatDollarsInputFromCents, formatMoneyCents, parseDollarsInputToCents } from "@/lib/format";
+
+type PendingConfirm = {
+  amount: number;
+  suspiciousCeiling: number;
+};
 
 export function AuctionRoomView({ auctionId }: { auctionId: string }): JSX.Element {
   const router = useRouter();
@@ -15,6 +21,10 @@ export function AuctionRoomView({ auctionId }: { auctionId: string }): JSX.Eleme
   const countdown = useCountdown(auction?.endsAt ?? new Date().toISOString());
   const [bidInput, setBidInput] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
+  // Phase 5 B3 M-1: when the server returns CONFIRMATION_REQUIRED (bid > suspicious
+  // ceiling but ≤ hard ceiling), stash the pending bid so the user can give
+  // explicit consent via a second click. Hard-ceiling errors never set this.
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
 
   useEffect(() => {
     if (!auction) {
@@ -31,6 +41,30 @@ export function AuctionRoomView({ auctionId }: { auctionId: string }): JSX.Eleme
       auction.sellerId !== user.id &&
       auction.currentBidderId !== user.id
   );
+
+  const submitBid = async (amount: number, confirmHighBid: boolean): Promise<void> => {
+    setLocalError(null);
+    const outcome = await placeBid(amount, { confirmHighBid });
+    if (outcome.ok) {
+      setPendingConfirm(null);
+      return;
+    }
+    if (outcome.error instanceof ApiClientError) {
+      if (outcome.error.code === "CONFIRMATION_REQUIRED") {
+        const ceiling = Number(outcome.error.details?.suspiciousCeiling);
+        if (Number.isFinite(ceiling)) {
+          setPendingConfirm({ amount, suspiciousCeiling: ceiling });
+          // Suppress the default banner while the confirm UI is visible.
+          clearError();
+          return;
+        }
+      }
+      if (outcome.error.code === "BID_EXCEEDS_HARD_CEILING") {
+        // Hard ceiling is terminal per plan §5 / §16.5 — never show confirm UI.
+        setPendingConfirm(null);
+      }
+    }
+  };
 
   const onPlaceBid = async (): Promise<void> => {
     if (!auction) {
@@ -54,8 +88,18 @@ export function AuctionRoomView({ auctionId }: { auctionId: string }): JSX.Eleme
       return;
     }
 
-    setLocalError(null);
-    await placeBid(normalized);
+    await submitBid(normalized, false);
+  };
+
+  const onConfirmHighBid = async (): Promise<void> => {
+    if (!pendingConfirm) {
+      return;
+    }
+    await submitBid(pendingConfirm.amount, true);
+  };
+
+  const onCancelConfirm = (): void => {
+    setPendingConfirm(null);
   };
 
   const activeError = localError ?? error;
@@ -229,6 +273,41 @@ export function AuctionRoomView({ auctionId }: { auctionId: string }): JSX.Eleme
                 {bidPending ? "Placing..." : "Place Bid"}
               </button>
             </div>
+
+            {pendingConfirm ? (
+              <div className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3">
+                <p className="text-sm font-bold text-amber-900">
+                  Confirm bid above the normal ceiling
+                </p>
+                <p className="mt-1 text-xs text-amber-800">
+                  Your bid of {formatMoneyCents(pendingConfirm.amount)} exceeds the suspicious ceiling of{" "}
+                  {formatMoneyCents(pendingConfirm.suspiciousCeiling)}. This is likely an accident. Confirm only
+                  if you intended to bid this much.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={bidPending}
+                    onClick={() => void onConfirmHighBid()}
+                    className={`rounded-xl px-4 py-2 text-sm font-bold transition ${
+                      bidPending
+                        ? "cursor-not-allowed bg-slate-200 text-slate-500"
+                        : "bg-amber-600 text-white hover:bg-amber-700"
+                    }`}
+                  >
+                    {bidPending ? "Placing..." : "Confirm and place bid"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={bidPending}
+                    onClick={onCancelConfirm}
+                    className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : null}
 
             {!user ? (
               <p className="mt-3 text-sm font-medium text-amber-700">

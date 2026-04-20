@@ -1,9 +1,9 @@
 import { withTransaction } from "../db/pool";
 import {
-  ANTI_SNIPE_EXTENSION_SECONDS,
   AUCTION_EVENTS_CHANNEL,
   BALANCE_EVENTS_CHANNEL,
   AUCTION_FEE_BPS,
+  FAT_FINGER_ABSOLUTE_FLOOR_CENTS,
   MIN_AUCTION_START_BID_CENTS,
   MIN_BID_INCREMENT_BPS,
   MIN_BID_INCREMENT_CENTS
@@ -712,6 +712,7 @@ export async function placeBid(input: {
   bidderId: string;
   auctionId: string;
   amount: number;
+  confirmHighBid?: boolean;
 }): Promise<PlaceBidResult> {
   const bidAmount = Math.trunc(input.amount);
 
@@ -765,6 +766,45 @@ export async function placeBid(input: {
       });
     }
 
+    // Phase 5 B3 fat-finger cap. Read market value inside the same tx to keep the
+    // bid path a single transactional unit (extension invariant: no second async step).
+    // Lock order is preserved: this is a read against pokemon_cards, no new lock acquired
+    // before the user lock below.
+    const marketValueResult = await client.query<{ current_price: string }>(
+      `SELECT pc.current_price
+       FROM pokemon_cards pc
+       JOIN cards c ON c.pokemon_card_id = pc.id
+       WHERE c.id = $1`,
+      [auction.card_id]
+    );
+    if (marketValueResult.rowCount !== 1) {
+      throw new AuctionServiceError("Market value not found for auction card.", 500, "MARKET_VALUE_UNAVAILABLE");
+    }
+    const marketValue = Number(marketValueResult.rows[0].current_price);
+
+    const currentReferenceBid = auction.current_bid ? Number(auction.current_bid) : Number(auction.starting_bid);
+    const suspiciousCeiling = Math.max(
+      currentReferenceBid * 5,
+      marketValue * 3,
+      FAT_FINGER_ABSOLUTE_FLOOR_CENTS
+    );
+    const hardCeiling = suspiciousCeiling * 2;
+
+    if (bidAmount > hardCeiling) {
+      throw new AuctionServiceError("Bid exceeds hard ceiling.", 400, "BID_EXCEEDS_HARD_CEILING", {
+        hardCeiling
+      });
+    }
+
+    if (bidAmount > suspiciousCeiling && !input.confirmHighBid) {
+      throw new AuctionServiceError(
+        "Bid exceeds suspicious ceiling; confirmation required.",
+        400,
+        "CONFIRMATION_REQUIRED",
+        { suspiciousCeiling }
+      );
+    }
+
     const bidderResult = await client.query<{ id: string; balance: string }>(
       `SELECT id, balance
        FROM users
@@ -810,18 +850,21 @@ export async function placeBid(input: {
       [input.bidderId, input.auctionId, bidAmount]
     );
 
+    // Phase 5 B3 randomized soft-close — source plan §456-§468. Literal 30s trigger
+    // window and 30-90s randomized extension (30 + floor(random()*60)). random() is
+    // evaluated in the DB so the decision is atomic with the bid write.
     const updatedAuctionResult = await client.query<{ ends_at: string }>(
       `UPDATE auctions
        SET current_bid = $2,
            current_bidder_id = $3,
            ends_at = CASE
-             WHEN ends_at <= now() + make_interval(secs => $4)
-               THEN now() + make_interval(secs => $4)
+             WHEN ends_at <= now() + make_interval(secs => 30)
+               THEN now() + make_interval(secs => 30 + floor(random() * 60)::int)
              ELSE ends_at
            END
        WHERE id = $1
        RETURNING ends_at`,
-      [input.auctionId, bidAmount, input.bidderId, ANTI_SNIPE_EXTENSION_SECONDS]
+      [input.auctionId, bidAmount, input.bidderId]
     );
 
     const bidResult = await client.query<BidJoinedRow>(
@@ -844,10 +887,16 @@ export async function placeBid(input: {
     };
   });
 
-  const auction = await getAuctionDetail({
+  const detail = await getAuctionDetail({
     auctionId: input.auctionId,
     viewerUserId: input.bidderId
   });
+
+  // Phase 5 B3 soft-close atomicity — plan §8.3 / §4.3.3: the broadcast must
+  // carry the ends_at value RETURNED by the bid UPDATE, not a later re-read.
+  // Overwriting here also keeps the HTTP response body consistent with the
+  // websocket payload (single authoritative value per bid commit).
+  const auction: AuctionDetailView = { ...detail, endsAt: result.currentEndsAt };
 
   const timeExtended = new Date(result.currentEndsAt).getTime() > new Date(result.previousEndsAt).getTime();
 
