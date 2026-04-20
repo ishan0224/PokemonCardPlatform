@@ -5,6 +5,7 @@ import { PACK_TIER_CONFIGS, PACK_TIERS } from "../config/pack-tiers";
 import {
   AUCTION_FEE_BPS,
   ECONOMICS_DEFAULT_WINDOW_HOURS,
+  ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS,
   ECONOMICS_MAX_WINDOW_DAYS,
   RARITY_ANCHOR_FALLBACK_CENTS,
   TARGET_HOUSE_EDGE_BPS,
@@ -772,5 +773,40 @@ export async function getPackEconomicsBundle(params: WindowParams): Promise<Pack
     worstPacks,
     topAuctions,
     integrity
+  };
+}
+
+export function buildMarginIncidentEvidence(bundle: PackEconomicsBundle): Record<string, unknown> | null {
+  const outOfBandTiers = bundle.tiers
+    .map((tier) => {
+      if (tier.actualHouseEdgeBps === null) {
+        return null;
+      }
+
+      const deltaBps = Math.abs(tier.actualHouseEdgeBps - tier.targetHouseEdgeBps);
+      if (deltaBps <= ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS) {
+        return null;
+      }
+
+      return {
+        tier: tier.tier,
+        actualHouseEdgeBps: tier.actualHouseEdgeBps,
+        targetHouseEdgeBps: tier.targetHouseEdgeBps,
+        deltaBps,
+        packsPurchased: tier.packsPurchased,
+        sigmaMarginCents: tier.sigmaMarginCents
+      };
+    })
+    .filter((tier): tier is NonNullable<typeof tier> => tier !== null);
+
+  if (bundle.integrity.tiersLosingMoneyCount === 0 && outOfBandTiers.length === 0) {
+    return null;
+  }
+
+  return {
+    incidentDeltaBps: ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS,
+    tiersLosingMoneyCount: bundle.integrity.tiersLosingMoneyCount,
+    outOfBandTiers,
+    window: bundle.window
   };
 }

@@ -149,6 +149,7 @@ export async function slidingWindowRateLimit(
   tx.zadd(key, now, requestId);
   tx.zcard(key);
   tx.pexpire(key, windowMs);
+  tx.zrange(key, 0, 0, "WITHSCORES");
 
   const result = await tx.exec();
 
@@ -157,11 +158,17 @@ export async function slidingWindowRateLimit(
   }
 
   const currentCount = Number(result[2]?.[1] ?? 0);
+  const oldestWithScore = result[4]?.[1];
+  const oldestScore =
+    Array.isArray(oldestWithScore) && oldestWithScore.length >= 2
+      ? Number(oldestWithScore[1])
+      : now;
+  const oldestMs = Number.isFinite(oldestScore) ? oldestScore : now;
 
   return {
     allowed: currentCount <= limit,
     remaining: Math.max(limit - currentCount, 0),
-    resetMs: windowMs
+    resetMs: Math.max(0, oldestMs + windowMs - now)
   };
 }
 
