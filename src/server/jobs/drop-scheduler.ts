@@ -1,10 +1,13 @@
 import type { PackTier } from "../../lib/types";
+import type { QueryResult, QueryResultRow } from "pg";
 import { DROP_SCHEDULER_INTERVAL_MS } from "../config/constants";
-import { query } from "../db/pool";
+import { query, withTransaction } from "../db/pool";
 import { getIO } from "../websocket/io";
 import { roomNames } from "../websocket/rooms";
 import type { JobStopper } from "./price-poller";
 import { syncDropInventoryCache } from "../services/drop.service";
+import { createEncryptedServerSeed, ensureNonceCounterRow } from "../services/fairness.service";
+import { getLatestGenerationVersion } from "../services/pack-generation-version.service";
 
 async function waitForTickDrain(isRunning: () => boolean): Promise<void> {
   while (isRunning()) {
@@ -40,33 +43,185 @@ function emitDropEvent(dropId: string, event: string, payload: Record<string, un
   }
 }
 
-async function activateDueDrops(): Promise<string[]> {
-  const result = await query<{ id: string }>(
-    `UPDATE drops
-     SET status = 'active'
+async function listDueDropIds(): Promise<string[]> {
+  const rows = await query<{ id: string }>(
+    `SELECT id
+     FROM drops
      WHERE status = 'upcoming'
        AND scheduled_at <= now()
-     RETURNING id`
+     ORDER BY scheduled_at ASC`
   );
 
-  return result.rows.map((row) => row.id);
+  return rows.rows.map((row) => row.id);
+}
+
+type LockedDropRow = {
+  id: string;
+  status: string;
+  active_generation_version_id: string | null;
+};
+
+type SchedulerQueryable = {
+  query<T extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]): Promise<QueryResult<T>>;
+};
+
+async function ensureDropGenerationVersion(
+  client: SchedulerQueryable,
+  dropId: string,
+  activeGenerationVersionId: string | null,
+  fallbackGenerationVersionId: string
+): Promise<void> {
+  if (activeGenerationVersionId) {
+    return;
+  }
+
+  await client.query(
+    `UPDATE drops
+     SET active_generation_version_id = $2
+     WHERE id = $1`,
+    [dropId, fallbackGenerationVersionId]
+  );
+}
+
+async function ensureDropServerSeedAndNonce(client: SchedulerQueryable, dropId: string): Promise<void> {
+  const existingSeed = await client.query<{ id: string }>(
+    `SELECT id
+     FROM server_seeds
+     WHERE drop_id = $1
+       AND revealed_at IS NULL
+     FOR UPDATE`,
+    [dropId]
+  );
+
+  if (existingSeed.rowCount === 1) {
+    await ensureNonceCounterRow(client, existingSeed.rows[0].id);
+    return;
+  }
+
+  const encryptedSeed = createEncryptedServerSeed();
+  const insertedSeed = await client.query<{ id: string }>(
+    `INSERT INTO server_seeds (
+       drop_id,
+       seed_hash,
+       seed_value_ciphertext,
+       seed_iv,
+       seed_auth_tag
+     )
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING id`,
+    [dropId, encryptedSeed.seedHash, encryptedSeed.ciphertext, encryptedSeed.iv, encryptedSeed.authTag]
+  );
+
+  await ensureNonceCounterRow(client, insertedSeed.rows[0].id);
+}
+
+async function ensureDropFairnessArtifacts(
+  client: SchedulerQueryable,
+  lockedDrop: LockedDropRow,
+  fallbackGenerationVersionId: string
+): Promise<void> {
+  await ensureDropGenerationVersion(
+    client,
+    lockedDrop.id,
+    lockedDrop.active_generation_version_id,
+    fallbackGenerationVersionId
+  );
+  await ensureDropServerSeedAndNonce(client, lockedDrop.id);
+}
+
+async function resolveLatestGenerationVersionId(): Promise<string | null> {
+  return withTransaction(async (client) => {
+    const latestGenerationVersion = await getLatestGenerationVersion(client);
+    return latestGenerationVersion?.id ?? null;
+  });
+}
+
+async function activateDropWithFairnessSetup(dropId: string, fallbackGenerationVersionId: string): Promise<boolean> {
+  return withTransaction(async (client) => {
+    const lockedDrop = await client.query<LockedDropRow>(
+      `SELECT id, status, active_generation_version_id
+       FROM drops
+       WHERE id = $1
+       FOR UPDATE`,
+      [dropId]
+    );
+
+    if (lockedDrop.rowCount !== 1 || lockedDrop.rows[0].status !== "upcoming") {
+      return false;
+    }
+
+    await client.query(
+      `UPDATE drops
+       SET status = 'active'
+       WHERE id = $1`,
+      [dropId]
+    );
+
+    await ensureDropFairnessArtifacts(client, lockedDrop.rows[0], fallbackGenerationVersionId);
+    return true;
+  });
+}
+
+async function ensureActiveDropFairnessSetup(dropId: string, fallbackGenerationVersionId: string): Promise<void> {
+  await withTransaction(async (client) => {
+    const lockedDrop = await client.query<LockedDropRow>(
+      `SELECT id, status, active_generation_version_id
+       FROM drops
+       WHERE id = $1
+       FOR UPDATE`,
+      [dropId]
+    );
+
+    if (lockedDrop.rowCount !== 1 || lockedDrop.rows[0].status !== "active") {
+      return;
+    }
+
+    await ensureDropFairnessArtifacts(client, lockedDrop.rows[0], fallbackGenerationVersionId);
+  });
+}
+
+async function activateDueDrops(fallbackGenerationVersionId: string): Promise<string[]> {
+  const dueDropIds = await listDueDropIds();
+  const activated: string[] = [];
+
+  for (const dropId of dueDropIds) {
+    const activatedThisDrop = await activateDropWithFairnessSetup(dropId, fallbackGenerationVersionId);
+    if (activatedThisDrop) {
+      activated.push(dropId);
+    }
+  }
+
+  return activated;
 }
 
 async function completeSoldOutDrops(): Promise<string[]> {
-  const result = await query<{ id: string }>(
-    `UPDATE drops d
-     SET status = 'completed'
-     WHERE d.status = 'active'
-       AND NOT EXISTS (
-         SELECT 1
-         FROM drop_packs dp
-         WHERE dp.drop_id = d.id
-           AND dp.remaining_inventory > 0
-       )
-     RETURNING d.id`
-  );
+  return withTransaction(async (client) => {
+    const completed = await client.query<{ id: string }>(
+      `UPDATE drops d
+       SET status = 'completed'
+       WHERE d.status = 'active'
+         AND NOT EXISTS (
+           SELECT 1
+           FROM drop_packs dp
+           WHERE dp.drop_id = d.id
+             AND dp.remaining_inventory > 0
+         )
+       RETURNING d.id`
+    );
 
-  return result.rows.map((row) => row.id);
+    const completedDropIds = completed.rows.map((row) => row.id);
+    if (completedDropIds.length > 0) {
+      await client.query(
+        `UPDATE server_seeds
+         SET revealed_at = now()
+         WHERE drop_id = ANY($1::uuid[])
+           AND revealed_at IS NULL`,
+        [completedDropIds]
+      );
+    }
+
+    return completedDropIds;
+  });
 }
 
 async function syncActiveDropInventoryCache(): Promise<void> {
@@ -78,9 +233,36 @@ async function syncActiveDropInventoryCache(): Promise<void> {
 }
 
 async function runSchedulerTick(): Promise<void> {
+  const fallbackGenerationVersionId = await resolveLatestGenerationVersionId();
+  if (!fallbackGenerationVersionId) {
+    console.error(
+      "[drop-scheduler] SKIP_ACTIVATION_NO_GENERATION_VERSION: no pack_generation_versions row found. " +
+        "Run `npm run partb:phase0:backfill` before activating drops."
+    );
+
+    await syncActiveDropInventoryCache();
+
+    const completedDropIds = await completeSoldOutDrops();
+    for (const dropId of completedDropIds) {
+      emitDropEvent(dropId, "drop_completed", {
+        dropId,
+        completedAt: new Date().toISOString()
+      });
+
+      console.log(`[drop-scheduler] Completed drop ${dropId}`);
+    }
+
+    return;
+  }
+
+  const activeDrops = await query<{ id: string }>("SELECT id FROM drops WHERE status = 'active'");
+  for (const row of activeDrops.rows) {
+    await ensureActiveDropFairnessSetup(row.id, fallbackGenerationVersionId);
+  }
+
   await syncActiveDropInventoryCache();
 
-  const activatedDropIds = await activateDueDrops();
+  const activatedDropIds = await activateDueDrops(fallbackGenerationVersionId);
 
   for (const dropId of activatedDropIds) {
     await syncDropInventoryCache(dropId);

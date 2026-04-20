@@ -1,11 +1,21 @@
+import { randomBytes } from "crypto";
 import type { QueryResult, QueryResultRow } from "pg";
 import type { DropStatus, PackTier } from "../../lib/types";
 import { PER_USER_TIER_LIMIT_PER_DROP } from "../config/constants";
 import { query, withTransaction } from "../db/pool";
+import { emitPurchaseObservability } from "../observability/purchase-observability";
 import { getIO } from "../websocket/io";
 import { roomNames } from "../websocket/rooms";
-import { generatePackCards, insertPackCards } from "./card.service";
+import {
+  generatePackCards,
+  hydrateCardsForSlotPlan,
+  insertPackCardsBulk,
+  materializeGeneratedCards
+} from "./card.service";
 import { getDropInventoryCache, setDropInventoryCache } from "../redis/client";
+import { getGenerationVersionById } from "./pack-generation-version.service";
+import { buildInventoryConsumeTelemetry, resolvePurchaseRejectCode } from "./purchase-hardening.service";
+import { allocateServerSeedNonce, decryptServerSeed, lockUnrevealedServerSeed } from "./fairness.service";
 
 export type DropTierView = {
   dropPackId: string;
@@ -69,6 +79,26 @@ type Queryable = {
   query<T extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]): Promise<QueryResult<T>>;
 };
 
+type PurchaseObservability = {
+  cacheSoldOutHint: boolean;
+  queryCount: number;
+  txDurationMs: number;
+  inventoryConsumeRoundtripMs: number | null;
+  generationContextLoadMs: number;
+  deterministicGenerateMs: number;
+  hydrateCardsBatchMs: number;
+  cardsBulkInsertMs: number;
+  expectedSlotCount: number;
+  uniqueSelectedCardCount: number;
+  insertedCardCount: number;
+  outcome: "success" | "error";
+  errorCode: string | null;
+};
+
+function nowMs(): number {
+  return Number(process.hrtime.bigint()) / 1_000_000;
+}
+
 function mapDropRows(rows: DropJoinedRow[]): DropView[] {
   const byDrop = new Map<string, DropView>();
 
@@ -120,6 +150,389 @@ async function writeCachedInventory(dropId: string, tier: PackTier, remainingInv
   } catch (_error) {
     // Redis is a non-authoritative cache layer in this flow.
   }
+}
+
+type TrackedQuery = <T extends QueryResultRow = QueryResultRow>(
+  text: string,
+  params?: unknown[]
+) => Promise<QueryResult<T>>;
+
+type PurchaseContextRow = {
+  drop_pack_id: string;
+  price: string;
+  total_inventory: number;
+  remaining_inventory: number;
+  drop_status: DropStatus;
+  active_generation_version_id: string | null;
+};
+
+type PurchaseContext = {
+  dropPackId: string;
+  price: number;
+  generationVersionId: string;
+  balance: number;
+};
+
+type InventoryConsumeResult = {
+  remainingInventory: number;
+  statementElapsedMs: number;
+  newBalance: number;
+};
+
+type FairnessCommitmentResult = {
+  serverSeedId: string;
+  nonce: bigint;
+  clientSeed: string;
+  serverSeedHex: string;
+};
+
+function createTrackedQuery(client: Queryable, observability: PurchaseObservability): TrackedQuery {
+  return async <T extends QueryResultRow = QueryResultRow>(
+    text: string,
+    params: unknown[] = []
+  ): Promise<QueryResult<T>> => {
+    observability.queryCount += 1;
+    return client.query<T>(text, params);
+  };
+}
+
+async function loadPurchaseContext(
+  input: { userId: string; dropId: string; tier: PackTier },
+  trackedQuery: TrackedQuery
+): Promise<PurchaseContext> {
+  const userBalanceResult = await trackedQuery<{ balance: string }>(
+    "SELECT balance FROM users WHERE id = $1 FOR UPDATE",
+    [input.userId]
+  );
+
+  if (userBalanceResult.rowCount !== 1) {
+    throw new DropServiceError("User not found.", 404, "USER_NOT_FOUND");
+  }
+
+  const activeHoldsResult = await trackedQuery<{ held: string }>(
+    "SELECT COALESCE(SUM(amount), 0)::BIGINT AS held FROM balance_holds WHERE user_id = $1 AND status = 'active'",
+    [input.userId]
+  );
+
+  const dropPackContextResult = await trackedQuery<PurchaseContextRow>(
+    `SELECT dp.id AS drop_pack_id,
+            dp.price,
+            dp.total_inventory,
+            dp.remaining_inventory,
+            d.status AS drop_status,
+            d.active_generation_version_id
+     FROM drop_packs dp
+     JOIN drops d ON d.id = dp.drop_id
+     WHERE dp.drop_id = $1
+       AND dp.tier = $2`,
+    [input.dropId, input.tier]
+  );
+
+  if (dropPackContextResult.rowCount !== 1) {
+    throw new DropServiceError("Drop tier not found.", 404, "DROP_TIER_NOT_FOUND", {
+      dropId: input.dropId,
+      tier: input.tier
+    });
+  }
+
+  const dropPack = dropPackContextResult.rows[0];
+  const generationVersionId = dropPack.active_generation_version_id;
+
+  if (dropPack.drop_status !== "active") {
+    throw new DropServiceError("Drop is not active.", 409, "DROP_NOT_ACTIVE", {
+      dropId: input.dropId,
+      status: dropPack.drop_status
+    });
+  }
+
+  if (!generationVersionId) {
+    throw new DropServiceError(
+      "Active generation version is required before purchasing packs.",
+      500,
+      "GENERATION_VERSION_MISSING",
+      { dropId: input.dropId, tier: input.tier }
+    );
+  }
+
+  const purchasesForTier = await trackedQuery<{ purchased_count: string }>(
+    `SELECT COUNT(*)::BIGINT AS purchased_count
+     FROM packs
+     WHERE user_id = $1
+       AND drop_pack_id = $2`,
+    [input.userId, dropPack.drop_pack_id]
+  );
+
+  const purchasedCount = Number(purchasesForTier.rows[0].purchased_count);
+  if (purchasedCount >= PER_USER_TIER_LIMIT_PER_DROP) {
+    throw new DropServiceError("Per-user tier limit reached for this drop.", 409, "PER_USER_TIER_LIMIT_REACHED", {
+      dropId: input.dropId,
+      tier: input.tier,
+      limit: PER_USER_TIER_LIMIT_PER_DROP
+    });
+  }
+
+  const price = Number(dropPack.price);
+  const balance = Number(userBalanceResult.rows[0].balance);
+  const held = Number(activeHoldsResult.rows[0].held);
+  const availableBalance = balance - held;
+
+  if (availableBalance < price) {
+    throw new DropServiceError("Insufficient available balance.", 409, "INSUFFICIENT_BALANCE", {
+      availableBalance,
+      price
+    });
+  }
+
+  return {
+    dropPackId: dropPack.drop_pack_id,
+    price,
+    generationVersionId,
+    balance
+  };
+}
+
+async function consumeInventoryAndChargeBalance(input: {
+  userId: string;
+  dropId: string;
+  tier: PackTier;
+  dropPackId: string;
+  balance: number;
+  price: number;
+  trackedQuery: TrackedQuery;
+}): Promise<InventoryConsumeResult> {
+  const decrementResult = await input.trackedQuery<{ remaining_inventory: number; statement_elapsed_ms: string }>(
+    `WITH started AS (
+       SELECT clock_timestamp() AS started_at
+     ),
+     decrement AS (
+       UPDATE drop_packs dp
+       SET remaining_inventory = dp.remaining_inventory - 1
+       FROM drops d
+       WHERE dp.id = $1
+         AND d.id = dp.drop_id
+         AND d.status = 'active'
+         AND dp.remaining_inventory > 0
+       RETURNING dp.remaining_inventory
+     )
+     SELECT decrement.remaining_inventory,
+            (EXTRACT(EPOCH FROM (clock_timestamp() - started.started_at)) * 1000)::numeric(20,3) AS statement_elapsed_ms
+     FROM started
+     JOIN decrement ON TRUE`,
+    [input.dropPackId]
+  );
+
+  if (decrementResult.rowCount !== 1) {
+    const failureContext = await input.trackedQuery<{
+      drop_status: DropStatus;
+      remaining_inventory: number;
+    }>(
+      `SELECT d.status AS drop_status, dp.remaining_inventory
+       FROM drop_packs dp
+       JOIN drops d ON d.id = dp.drop_id
+       WHERE dp.id = $1`,
+      [input.dropPackId]
+    );
+
+    if (failureContext.rowCount === 1) {
+      const failureCode = resolvePurchaseRejectCode({
+        dropStatus: failureContext.rows[0].drop_status,
+        remainingInventory: Number(failureContext.rows[0].remaining_inventory)
+      });
+
+      if (failureCode === "DROP_NOT_ACTIVE") {
+        throw new DropServiceError("Drop is not active.", 409, "DROP_NOT_ACTIVE", {
+          dropId: input.dropId,
+          status: failureContext.rows[0].drop_status
+        });
+      }
+    }
+
+    throw new DropServiceError("Pack is sold out.", 409, "SOLD_OUT", {
+      dropId: input.dropId,
+      tier: input.tier
+    });
+  }
+
+  const remainingInventory = Number(decrementResult.rows[0].remaining_inventory);
+  const newBalance = input.balance - input.price;
+
+  await input.trackedQuery("UPDATE users SET balance = $1 WHERE id = $2", [newBalance, input.userId]);
+
+  return {
+    remainingInventory,
+    statementElapsedMs: Number(decrementResult.rows[0].statement_elapsed_ms),
+    newBalance
+  };
+}
+
+async function insertPackRow(input: {
+  userId: string;
+  dropPackId: string;
+  tier: PackTier;
+  price: number;
+  generationVersionId: string;
+  trackedQuery: TrackedQuery;
+}): Promise<{ packId: string; purchasedAt: string }> {
+  const packResult = await input.trackedQuery<{ id: string; purchased_at: string }>(
+    `INSERT INTO packs (user_id, drop_pack_id, tier, price_paid, generation_version_id)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING id, purchased_at`,
+    [input.userId, input.dropPackId, input.tier, input.price, input.generationVersionId]
+  );
+
+  return {
+    packId: packResult.rows[0].id,
+    purchasedAt: packResult.rows[0].purchased_at
+  };
+}
+
+async function loadPinnedGenerationVersion(input: {
+  trackedClient: Queryable;
+  generationVersionId: string;
+  dropId: string;
+  tier: PackTier;
+}): Promise<NonNullable<Awaited<ReturnType<typeof getGenerationVersionById>>>> {
+  const generationVersion = await getGenerationVersionById(input.trackedClient, input.generationVersionId);
+  if (!generationVersion) {
+    throw new DropServiceError("Pinned generation version could not be loaded.", 500, "GENERATION_VERSION_MISSING", {
+      dropId: input.dropId,
+      tier: input.tier,
+      generationVersionId: input.generationVersionId
+    });
+  }
+
+  return generationVersion;
+}
+
+async function prepareFairnessCommitment(input: {
+  trackedClient: Queryable;
+  trackedQuery: TrackedQuery;
+  dropId: string;
+  packId: string;
+}): Promise<FairnessCommitmentResult> {
+  const serverSeed = await lockUnrevealedServerSeed(input.trackedClient, input.dropId);
+  if (!serverSeed) {
+    throw new DropServiceError("Server seed is unavailable for this active drop.", 500, "SEED_NOT_AVAILABLE", {
+      dropId: input.dropId
+    });
+  }
+
+  let nonce: bigint;
+  try {
+    nonce = await allocateServerSeedNonce(input.trackedClient, serverSeed.id);
+  } catch (error) {
+    throw new DropServiceError("Failed to allocate deterministic nonce.", 500, "NONCE_ALLOCATION_FAILED", {
+      dropId: input.dropId,
+      serverSeedId: serverSeed.id,
+      reason: error instanceof Error ? error.message : "unknown"
+    });
+  }
+
+  const clientSeed = randomBytes(16).toString("hex");
+  await input.trackedQuery(
+    `INSERT INTO pack_commitments (
+       pack_id,
+       server_seed_id,
+       server_seed_hash_at_commit,
+       client_seed,
+       nonce
+     )
+     VALUES ($1, $2, $3, $4, $5)`,
+    [input.packId, serverSeed.id, serverSeed.seed_hash, clientSeed, nonce.toString()]
+  );
+
+  let serverSeedHex: string;
+  try {
+    serverSeedHex = decryptServerSeed({
+      seedValueCiphertext: serverSeed.seed_value_ciphertext,
+      seedIv: serverSeed.seed_iv,
+      seedAuthTag: serverSeed.seed_auth_tag,
+      seedHash: serverSeed.seed_hash
+    });
+  } catch (error) {
+    throw new DropServiceError("Server seed decryption failed for active drop.", 500, "SEED_NOT_AVAILABLE", {
+      dropId: input.dropId,
+      serverSeedId: serverSeed.id,
+      reason: error instanceof Error ? error.message : "unknown"
+    });
+  }
+
+  return {
+    serverSeedId: serverSeed.id,
+    nonce,
+    clientSeed,
+    serverSeedHex
+  };
+}
+
+async function generateAndPersistPackCards(input: {
+  trackedClient: Queryable;
+  tier: PackTier;
+  packId: string;
+  ownerId: string;
+  generationPayload: Parameters<typeof generatePackCards>[0]["generationVersion"];
+  serverSeedHex: string;
+  clientSeedHex: string;
+  nonce: bigint;
+  observability: PurchaseObservability;
+}): Promise<Awaited<ReturnType<typeof insertPackCardsBulk>>> {
+  const deterministicGenerateStartedAtMs = nowMs();
+  const { slotPlan, expectedSlotCount } = await generatePackCards({
+    tier: input.tier,
+    generationVersion: input.generationPayload,
+    serverSeedHex: input.serverSeedHex,
+    clientSeedHex: input.clientSeedHex,
+    nonce: input.nonce
+  });
+  input.observability.deterministicGenerateMs += nowMs() - deterministicGenerateStartedAtMs;
+  input.observability.expectedSlotCount = expectedSlotCount;
+  input.observability.uniqueSelectedCardCount = new Set(slotPlan.map((entry) => entry.pokemonCardId)).size;
+
+  const hydrateCardsBatchStartedAtMs = nowMs();
+  const hydratedCards = await hydrateCardsForSlotPlan(slotPlan, input.trackedClient);
+  input.observability.hydrateCardsBatchMs += nowMs() - hydrateCardsBatchStartedAtMs;
+
+  const generatedCards = materializeGeneratedCards({
+    tier: input.tier,
+    slotPlan,
+    hydratedByCardId: hydratedCards,
+    expectedSlotCount
+  });
+
+  const cardsBulkInsertStartedAtMs = nowMs();
+  const insertedCards = await insertPackCardsBulk(
+    {
+      packId: input.packId,
+      ownerId: input.ownerId,
+      cards: generatedCards
+    },
+    input.trackedClient
+  );
+  input.observability.cardsBulkInsertMs += nowMs() - cardsBulkInsertStartedAtMs;
+  input.observability.insertedCardCount = insertedCards.length;
+
+  return insertedCards;
+}
+
+async function recordPackPurchaseLedger(input: {
+  trackedQuery: TrackedQuery;
+  userId: string;
+  packId: string;
+  price: number;
+  newBalance: number;
+  packMargin: number;
+}): Promise<void> {
+  await input.trackedQuery(
+    `INSERT INTO transactions (user_id, type, amount, reference_id, balance_after)
+     VALUES ($1, 'pack_purchase', $2, $3, $4)`,
+    [input.userId, -input.price, input.packId, input.newBalance]
+  );
+
+  await input.trackedQuery(
+    `INSERT INTO platform_revenue (type, amount, reference_id)
+     VALUES ('pack_margin', $1, $2)`,
+    [input.packMargin, input.packId]
+  );
 }
 
 export async function listDrops(limit = 20): Promise<DropView[]> {
@@ -186,191 +599,168 @@ export async function purchasePack(input: {
   dropId: string;
   tier: PackTier;
 }): Promise<PurchasePackResult> {
+  const purchaseStartedAtMs = nowMs();
   const cachedRemaining = await readCachedInventory(input.dropId, input.tier);
+  const observability: PurchaseObservability = {
+    cacheSoldOutHint: cachedRemaining !== null && cachedRemaining <= 0,
+    queryCount: 0,
+    txDurationMs: 0,
+    inventoryConsumeRoundtripMs: null,
+    generationContextLoadMs: 0,
+    deterministicGenerateMs: 0,
+    hydrateCardsBatchMs: 0,
+    cardsBulkInsertMs: 0,
+    expectedSlotCount: 0,
+    uniqueSelectedCardCount: 0,
+    insertedCardCount: 0,
+    outcome: "success",
+    errorCode: null
+  };
 
-  if (cachedRemaining !== null && cachedRemaining <= 0) {
-    throw new DropServiceError("Pack is sold out.", 409, "SOLD_OUT", {
-      dropId: input.dropId,
-      tier: input.tier
-    });
-  }
+  try {
+    const purchase = await withTransaction(async (client) => {
+      const trackedQuery = createTrackedQuery(client, observability);
+      const trackedClient: Queryable = {
+        query: trackedQuery
+      };
 
-  const purchase = await withTransaction(async (client) => {
-    const userBalanceResult = await client.query<{ balance: string }>(
-      "SELECT balance FROM users WHERE id = $1 FOR UPDATE",
-      [input.userId]
-    );
+      const purchaseContext = await loadPurchaseContext(input, trackedQuery);
+      const inventoryResult = await consumeInventoryAndChargeBalance({
+        userId: input.userId,
+        dropId: input.dropId,
+        tier: input.tier,
+        dropPackId: purchaseContext.dropPackId,
+        balance: purchaseContext.balance,
+        price: purchaseContext.price,
+        trackedQuery
+      });
+      observability.inventoryConsumeRoundtripMs = inventoryResult.statementElapsedMs;
 
-    if (userBalanceResult.rowCount !== 1) {
-      throw new DropServiceError("User not found.", 404, "USER_NOT_FOUND");
-    }
+      const packRow = await insertPackRow({
+        userId: input.userId,
+        dropPackId: purchaseContext.dropPackId,
+        tier: input.tier,
+        price: purchaseContext.price,
+        generationVersionId: purchaseContext.generationVersionId,
+        trackedQuery
+      });
 
-    const activeHoldsResult = await client.query<{ held: string }>(
-      "SELECT COALESCE(SUM(amount), 0)::BIGINT AS held FROM balance_holds WHERE user_id = $1 AND status = 'active'",
-      [input.userId]
-    );
-
-    const dropPackResult = await client.query<{
-      drop_pack_id: string;
-      price: string;
-      total_inventory: number;
-      remaining_inventory: number;
-      drop_status: DropStatus;
-    }>(
-      `SELECT dp.id AS drop_pack_id,
-              dp.price,
-              dp.total_inventory,
-              dp.remaining_inventory,
-              d.status AS drop_status
-       FROM drop_packs dp
-       JOIN drops d ON d.id = dp.drop_id
-       WHERE dp.drop_id = $1
-         AND dp.tier = $2
-       FOR UPDATE OF dp`,
-      [input.dropId, input.tier]
-    );
-
-    if (dropPackResult.rowCount !== 1) {
-      throw new DropServiceError("Drop tier not found.", 404, "DROP_TIER_NOT_FOUND", {
+      const generationContextStartedAtMs = nowMs();
+      const generationVersion = await loadPinnedGenerationVersion({
+        trackedClient,
+        generationVersionId: purchaseContext.generationVersionId,
         dropId: input.dropId,
         tier: input.tier
       });
-    }
+      observability.generationContextLoadMs += nowMs() - generationContextStartedAtMs;
 
-    const dropPack = dropPackResult.rows[0];
-
-    if (dropPack.drop_status !== "active") {
-      throw new DropServiceError("Drop is not active.", 409, "DROP_NOT_ACTIVE", {
+      const fairnessCommitment = await prepareFairnessCommitment({
+        trackedClient,
+        trackedQuery,
         dropId: input.dropId,
-        status: dropPack.drop_status
+        packId: packRow.packId
       });
-    }
 
-    const purchasesForTier = await client.query<{ purchased_count: string }>(
-      `SELECT COUNT(*)::BIGINT AS purchased_count
-       FROM packs
-       WHERE user_id = $1
-         AND drop_pack_id IN (
-           SELECT id
-           FROM drop_packs
-           WHERE drop_id = $2
-             AND tier = $3
-         )`,
-      [input.userId, input.dropId, input.tier]
-    );
-
-    const purchasedCount = Number(purchasesForTier.rows[0].purchased_count);
-
-    if (purchasedCount >= PER_USER_TIER_LIMIT_PER_DROP) {
-      throw new DropServiceError(
-        "Per-user tier limit reached for this drop.",
-        409,
-        "PER_USER_TIER_LIMIT_REACHED",
-        {
-          dropId: input.dropId,
-          tier: input.tier,
-          limit: PER_USER_TIER_LIMIT_PER_DROP
-        }
-      );
-    }
-
-    const price = Number(dropPack.price);
-    const balance = Number(userBalanceResult.rows[0].balance);
-    const held = Number(activeHoldsResult.rows[0].held);
-    const availableBalance = balance - held;
-
-    if (availableBalance < price) {
-      throw new DropServiceError("Insufficient available balance.", 409, "INSUFFICIENT_BALANCE", {
-        availableBalance,
-        price
-      });
-    }
-
-    const decrementResult = await client.query<{ remaining_inventory: number }>(
-      `UPDATE drop_packs
-       SET remaining_inventory = remaining_inventory - 1
-       WHERE id = $1
-         AND remaining_inventory > 0
-       RETURNING remaining_inventory`,
-      [dropPack.drop_pack_id]
-    );
-
-    if (decrementResult.rowCount !== 1) {
-      throw new DropServiceError("Pack is sold out.", 409, "SOLD_OUT", {
-        dropId: input.dropId,
-        tier: input.tier
-      });
-    }
-
-    const remainingInventory = Number(decrementResult.rows[0].remaining_inventory);
-    const newBalance = balance - price;
-
-    await client.query("UPDATE users SET balance = $1 WHERE id = $2", [newBalance, input.userId]);
-
-    const packResult = await client.query<{ id: string; purchased_at: string }>(
-      `INSERT INTO packs (user_id, drop_pack_id, tier, price_paid)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, purchased_at`,
-      [input.userId, dropPack.drop_pack_id, input.tier, price]
-    );
-
-    const packId = packResult.rows[0].id;
-    const purchasedAt = packResult.rows[0].purchased_at;
-
-    const generatedCards = await generatePackCards(input.tier, client);
-    const insertedCards = await insertPackCards(
-      {
-        packId,
+      const insertedCards = await generateAndPersistPackCards({
+        trackedClient,
+        tier: input.tier,
+        packId: packRow.packId,
         ownerId: input.userId,
-        cards: generatedCards
-      },
-      client
-    );
+        generationPayload: generationVersion.payload,
+        serverSeedHex: fairnessCommitment.serverSeedHex,
+        clientSeedHex: fairnessCommitment.clientSeed,
+        nonce: fairnessCommitment.nonce,
+        observability
+      });
 
-    const totalCardValue = insertedCards.reduce((sum, card) => sum + card.acquisitionPrice, 0);
-    const packMargin = price - totalCardValue;
+      const totalCardValue = insertedCards.reduce((sum, card) => sum + card.acquisitionPrice, 0);
+      const packMargin = purchaseContext.price - totalCardValue;
 
-    await client.query(
-      `INSERT INTO transactions (user_id, type, amount, reference_id, balance_after)
-       VALUES ($1, 'pack_purchase', $2, $3, $4)`,
-      [input.userId, -price, packId, newBalance]
-    );
+      await recordPackPurchaseLedger({
+        trackedQuery,
+        userId: input.userId,
+        packId: packRow.packId,
+        price: purchaseContext.price,
+        newBalance: inventoryResult.newBalance,
+        packMargin
+      });
 
-    await client.query(
-      `INSERT INTO platform_revenue (type, amount, reference_id)
-       VALUES ('pack_margin', $1, $2)`,
-      [packMargin, packId]
-    );
+      return {
+        packId: packRow.packId,
+        dropId: input.dropId,
+        dropPackId: purchaseContext.dropPackId,
+        tier: input.tier,
+        pricePaid: purchaseContext.price,
+        remainingInventory: inventoryResult.remainingInventory,
+        purchasedAt: packRow.purchasedAt,
+        cardsCount: insertedCards.length,
+        newBalance: inventoryResult.newBalance
+      } satisfies PurchasePackResult;
+    });
 
-    return {
-      packId,
-      dropId: input.dropId,
-      dropPackId: dropPack.drop_pack_id,
-      tier: input.tier,
-      pricePaid: price,
-      remainingInventory,
-      purchasedAt,
-      cardsCount: insertedCards.length,
-      newBalance
-    } satisfies PurchasePackResult;
-  });
+    await writeCachedInventory(purchase.dropId, purchase.tier, purchase.remainingInventory);
 
-  await writeCachedInventory(purchase.dropId, purchase.tier, purchase.remainingInventory);
-
-  await maybeEmitDropEvent(purchase.dropId, "inventory_update", {
-    dropId: purchase.dropId,
-    tier: purchase.tier,
-    remainingInventory: purchase.remainingInventory
-  });
-
-  if (purchase.remainingInventory === 0) {
-    await maybeEmitDropEvent(purchase.dropId, "sold_out", {
+    await maybeEmitDropEvent(purchase.dropId, "inventory_update", {
       dropId: purchase.dropId,
-      tier: purchase.tier
+      tier: purchase.tier,
+      remainingInventory: purchase.remainingInventory
+    });
+
+    if (purchase.remainingInventory === 0) {
+      await maybeEmitDropEvent(purchase.dropId, "sold_out", {
+        dropId: purchase.dropId,
+        tier: purchase.tier
+      });
+    }
+
+    observability.outcome = "success";
+    return purchase;
+  } catch (error) {
+    observability.outcome = "error";
+    observability.errorCode =
+      typeof error === "object" && error && "code" in error ? String((error as { code?: string }).code ?? "") || null : null;
+    throw error;
+  } finally {
+    observability.txDurationMs = nowMs() - purchaseStartedAtMs;
+    const basePayload = {
+      dropId: input.dropId,
+      tier: input.tier,
+      userId: input.userId,
+      outcome: observability.outcome,
+      errorCode: observability.errorCode
+    };
+
+    emitPurchaseObservability("purchase_pack", {
+      ...basePayload,
+      tx_duration_ms: Number(observability.txDurationMs.toFixed(3)),
+      query_count: observability.queryCount,
+      cache_sold_out_hint: observability.cacheSoldOutHint,
+      rejection_precedence_rule: "inventory_first",
+      ...buildInventoryConsumeTelemetry({
+        statementElapsedMs: observability.inventoryConsumeRoundtripMs
+      })
+    });
+    emitPurchaseObservability("generation_context_load", {
+      ...basePayload,
+      duration_ms: Number(observability.generationContextLoadMs.toFixed(3))
+    });
+    emitPurchaseObservability("deterministic_generate", {
+      ...basePayload,
+      duration_ms: Number(observability.deterministicGenerateMs.toFixed(3)),
+      expected_slot_count: observability.expectedSlotCount,
+      unique_selected_card_count: observability.uniqueSelectedCardCount
+    });
+    emitPurchaseObservability("hydrate_cards_batch", {
+      ...basePayload,
+      duration_ms: Number(observability.hydrateCardsBatchMs.toFixed(3)),
+      unique_selected_card_count: observability.uniqueSelectedCardCount
+    });
+    emitPurchaseObservability("cards_bulk_insert", {
+      ...basePayload,
+      duration_ms: Number(observability.cardsBulkInsertMs.toFixed(3)),
+      inserted_card_count: observability.insertedCardCount
     });
   }
-
-  return purchase;
 }
 
 export async function syncDropInventoryCache(dropId: string, client?: Queryable): Promise<void> {

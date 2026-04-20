@@ -5,6 +5,7 @@ import {
   type PokemonCardPriceCacheValue
 } from "../redis/client";
 import { query } from "../db/pool";
+import { RARITY_TIERS } from "../../lib/types";
 import type { CardState, RarityTier } from "../../lib/types";
 
 export type CollectionSort = "newest" | "value_desc" | "value_asc" | "pnl_desc" | "pnl_asc";
@@ -61,7 +62,7 @@ const COLLECTION_SORT_SQL: Record<CollectionSort, string> = {
   pnl_asc: "(pc.current_price - c.acquisition_price) ASC, c.created_at DESC"
 };
 
-const RARITY_ORDER: readonly RarityTier[] = ["common", "uncommon", "rare", "holo_rare", "ultra_rare", "chase"];
+const RARITY_ORDER: readonly RarityTier[] = [...RARITY_TIERS];
 
 type CollectionRow = {
   card_id: string;

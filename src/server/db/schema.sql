@@ -4,9 +4,15 @@ CREATE TABLE IF NOT EXISTS users (
     id              UUID PRIMARY KEY,
     username        VARCHAR(32) UNIQUE NOT NULL,
     email           VARCHAR(255) UNIQUE NOT NULL,
-    balance         BIGINT NOT NULL DEFAULT 10000,
+    balance         BIGINT NOT NULL DEFAULT 25000,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Business v2 policy:
+-- - New users receive $250 (25000 cents).
+-- - Existing user balances are not backfilled by schema migration.
+ALTER TABLE users
+ALTER COLUMN balance SET DEFAULT 25000;
 
 ALTER TABLE users
 ADD COLUMN IF NOT EXISTS role VARCHAR(16) NOT NULL DEFAULT 'user';
@@ -36,6 +42,22 @@ CREATE TABLE IF NOT EXISTS drops (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'drops_status_check'
+  ) THEN
+    ALTER TABLE drops
+      DROP CONSTRAINT drops_status_check;
+  END IF;
+
+  ALTER TABLE drops
+    ADD CONSTRAINT drops_status_check
+    CHECK (status IN ('upcoming', 'active', 'completed', 'cancelled'));
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_drops_status_scheduled ON drops (status, scheduled_at);
 
 CREATE TABLE IF NOT EXISTS drop_packs (
@@ -49,6 +71,25 @@ CREATE TABLE IF NOT EXISTS drop_packs (
 
     CONSTRAINT remaining_non_negative CHECK (remaining_inventory >= 0)
 );
+
+ALTER TABLE drop_packs
+ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active';
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'drop_packs_status_check'
+  ) THEN
+    ALTER TABLE drop_packs
+      DROP CONSTRAINT drop_packs_status_check;
+  END IF;
+
+  ALTER TABLE drop_packs
+    ADD CONSTRAINT drop_packs_status_check
+    CHECK (status IN ('active', 'cancelled'));
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_drop_packs_drop_id ON drop_packs (drop_id);
 
@@ -64,6 +105,143 @@ CREATE TABLE IF NOT EXISTS packs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_packs_user_id ON packs (user_id);
+
+CREATE TABLE IF NOT EXISTS pack_generation_versions (
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    version_number        BIGSERIAL UNIQUE NOT NULL,
+    algorithm_version     TEXT NOT NULL,
+    weights_json          JSONB NOT NULL,
+    eligible_card_ids_json JSONB NOT NULL,
+    anchor_snapshot_json  JSONB NOT NULL,
+    content_hash          CHAR(64) NOT NULL UNIQUE,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pack_generation_versions_version_number_desc
+ON pack_generation_versions (version_number DESC);
+
+ALTER TABLE drops
+ADD COLUMN IF NOT EXISTS active_generation_version_id UUID;
+
+ALTER TABLE packs
+ADD COLUMN IF NOT EXISTS generation_version_id UUID;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'drops_active_generation_version_id_fkey'
+  ) THEN
+    ALTER TABLE drops
+      ADD CONSTRAINT drops_active_generation_version_id_fkey
+      FOREIGN KEY (active_generation_version_id)
+      REFERENCES pack_generation_versions(id);
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'packs'
+      AND column_name = 'generation_version_id'
+      AND is_nullable = 'YES'
+  ) THEN
+    IF EXISTS (
+      SELECT 1
+      FROM packs
+      WHERE generation_version_id IS NULL
+    ) THEN
+      RAISE EXCEPTION
+        'PACKS_GENERATION_VERSION_BACKFILL_REQUIRED: packs.generation_version_id has NULL rows. Run `npm run partb:phase0:backfill` before schema hardening.';
+    END IF;
+
+    ALTER TABLE packs
+      ALTER COLUMN generation_version_id SET NOT NULL;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'packs_generation_version_id_fkey'
+  ) THEN
+    ALTER TABLE packs
+      ADD CONSTRAINT packs_generation_version_id_fkey
+      FOREIGN KEY (generation_version_id)
+      REFERENCES pack_generation_versions(id);
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS server_seeds (
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    drop_id               UUID UNIQUE REFERENCES drops(id),
+    seed_hash             CHAR(64) NOT NULL,
+    seed_value_ciphertext BYTEA,
+    seed_iv               BYTEA,
+    seed_auth_tag         BYTEA,
+    committed_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    revealed_at           TIMESTAMPTZ,
+    CHECK (
+      (seed_value_ciphertext IS NULL AND seed_iv IS NULL AND seed_auth_tag IS NULL)
+      OR
+      (seed_value_ciphertext IS NOT NULL AND seed_iv IS NOT NULL AND seed_auth_tag IS NOT NULL)
+    )
+);
+
+CREATE TABLE IF NOT EXISTS server_seed_nonce_counters (
+    server_seed_id        UUID PRIMARY KEY REFERENCES server_seeds(id),
+    next_nonce            BIGINT NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS pack_commitments (
+    pack_id                    UUID PRIMARY KEY REFERENCES packs(id),
+    server_seed_id             UUID NOT NULL REFERENCES server_seeds(id),
+    server_seed_hash_at_commit CHAR(64) NOT NULL,
+    client_seed                TEXT NOT NULL,
+    nonce                      BIGINT NOT NULL,
+    UNIQUE (server_seed_id, nonce)
+);
+
+CREATE TABLE IF NOT EXISTS security_events (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_type      VARCHAR(32) NOT NULL,
+    user_id         UUID REFERENCES users(id),
+    ip              VARCHAR(64),
+    request_key     TEXT,
+    evidence_json   JSONB,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_security_events_type_created_desc
+ON security_events (event_type, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_security_events_user_created_desc
+ON security_events (user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS fairness_audit_results (
+    id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    window_start                TIMESTAMPTZ NOT NULL,
+    window_end                  TIMESTAMPTZ NOT NULL,
+    observed_counts_json        JSONB NOT NULL,
+    expected_counts_json        JSONB NOT NULL,
+    test_statistic              NUMERIC(20,10) NOT NULL,
+    degrees_of_freedom          INT NOT NULL,
+    p_value                     NUMERIC(10,8) NOT NULL,
+    monte_carlo_n_samples       INT,
+    monte_carlo_extreme_count   INT,
+    ran_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    run_source                  VARCHAR(16) NOT NULL
+                                CHECK (run_source IN ('nightly', 'on_demand'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_fairness_audit_results_ran_at_desc
+ON fairness_audit_results (ran_at DESC);
 
 CREATE TABLE IF NOT EXISTS pokemon_cards (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -187,6 +365,25 @@ CREATE TABLE IF NOT EXISTS bids (
 );
 
 CREATE INDEX IF NOT EXISTS idx_bids_auction_id ON bids (auction_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS auction_flags (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    auction_id      UUID NOT NULL REFERENCES auctions(id),
+    flag_type       VARCHAR(32) NOT NULL,
+    evidence_json   JSONB NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    resolved_at     TIMESTAMPTZ,
+    resolved_by     UUID REFERENCES users(id),
+    resolution      VARCHAR(32)
+                    CHECK (resolution IN ('dismissed', 'actioned') OR resolution IS NULL)
+);
+
+CREATE INDEX IF NOT EXISTS idx_auction_flags_unresolved_created
+ON auction_flags (resolved_at, created_at)
+WHERE resolved_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_auction_flags_auction_id
+ON auction_flags (auction_id);
 
 CREATE TABLE IF NOT EXISTS balance_holds (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),

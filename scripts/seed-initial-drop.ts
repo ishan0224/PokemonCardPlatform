@@ -1,13 +1,22 @@
 import { DROP_INVENTORY_DEFAULT, PACK_PRICE_CENTS } from "../src/server/config/constants";
 import { PACK_TIERS } from "../src/server/config/pack-tiers";
 import { closeDatabasePool, withTransaction } from "../src/server/db/pool";
+import { getLatestGenerationVersion } from "../src/server/services/pack-generation-version.service";
 
 async function main(): Promise<void> {
   const insertedDrop = await withTransaction(async (client) => {
+    const latestGenerationVersion = await getLatestGenerationVersion(client);
+    if (!latestGenerationVersion) {
+      throw new Error(
+        "SEED_GENERATION_VERSION_MISSING: run `npm run partb:phase0:backfill` before `npm run seed:drop`."
+      );
+    }
+
     const dropResult = await client.query<{ id: string }>(
-      `INSERT INTO drops (scheduled_at, status)
-       VALUES (now() + INTERVAL '5 minutes', 'upcoming')
-       RETURNING id`
+      `INSERT INTO drops (scheduled_at, status, active_generation_version_id)
+       VALUES (now() + INTERVAL '5 minutes', 'upcoming', $1)
+       RETURNING id`,
+      [latestGenerationVersion.id]
     );
 
     const dropId = dropResult.rows[0].id;
