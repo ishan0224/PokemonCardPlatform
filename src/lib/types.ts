@@ -145,6 +145,18 @@ export interface IntegrityChecks {
   tiersLosingMoneyCount: number;
 }
 
+export interface BidsInFinal10PctMetric {
+  auctionCount: number;
+  totalBids: number;
+  finalWindowBids: number;
+  rate: number;
+}
+
+export interface AuctionSnipeMetrics {
+  extensionTriggerRate: number;
+  bidsInFinal10Pct: BidsInFinal10PctMetric;
+}
+
 export interface PackEconomicsBundle {
   window: EconomicsWindow;
   generatedAtIso: string;
@@ -158,6 +170,7 @@ export interface PackEconomicsBundle {
   worstPacks: WorstPack[];
   topAuctions: TopAuction[];
   integrity: IntegrityChecks;
+  auctionSnipeMetrics: AuctionSnipeMetrics;
 }
 
 export interface EconomicsSimulationTier {

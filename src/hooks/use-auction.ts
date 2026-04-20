@@ -11,6 +11,8 @@ import {
 import { useAuth } from "./use-auth";
 import { useAuctionRoom } from "./use-socket";
 
+export type PlaceBidOutcome = { ok: true } | { ok: false; error: unknown };
+
 type UseAuctionState = {
   auction: AuctionDetail | null;
   loading: boolean;
@@ -19,7 +21,7 @@ type UseAuctionState = {
   bidPending: boolean;
   watcherCount: number;
   refresh: () => Promise<void>;
-  placeBid: (amount: number) => Promise<void>;
+  placeBid: (amount: number, options?: { confirmHighBid?: boolean }) => Promise<PlaceBidOutcome>;
 };
 
 export function useAuction(auctionId: string, enableRealtime = true): UseAuctionState {
@@ -102,28 +104,36 @@ export function useAuction(auctionId: string, enableRealtime = true): UseAuction
   }, [auctionId]);
 
   const placeBid = useCallback(
-    async (amount: number): Promise<void> => {
+    async (amount: number, options?: { confirmHighBid?: boolean }): Promise<PlaceBidOutcome> => {
       if (!mountedRef.current) {
-        return;
+        return { ok: false, error: new Error("unmounted") };
       }
 
       setBidPending(true);
       setError(null);
 
       try {
-        const result = await apiClient.placeBid(auctionId, amount);
+        const result = await apiClient.placeBid(auctionId, amount, {
+          confirmHighBid: options?.confirmHighBid
+        });
         if (!mountedRef.current) {
-          return;
+          return { ok: true };
         }
         setAuction(result.auction);
+        return { ok: true };
       } catch (err) {
         if (!mountedRef.current) {
-          return;
+          return { ok: false, error: err };
         }
+        // Mirror into local state for the default error banner; return the
+        // raw error so callers can inspect ApiClientError.code / .details
+        // (e.g. CONFIRMATION_REQUIRED + suspiciousCeiling) and render a
+        // confirm prompt instead of the default banner when appropriate.
         const message = mapApiErrorToMessage(err);
         if (message) {
           setError(message);
         }
+        return { ok: false, error: err };
       } finally {
         if (mountedRef.current) {
           setBidPending(false);

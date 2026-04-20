@@ -93,6 +93,7 @@ export function handleRouteError(error: unknown): NextResponse {
     );
   }
 
+  console.error("[api] unhandled route error:", error);
   return jsonError(
     {
       code: "INTERNAL_SERVER_ERROR",

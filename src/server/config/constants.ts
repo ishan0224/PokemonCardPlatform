@@ -71,7 +71,6 @@ export const MIN_LISTING_PRICE_CENTS = 50;
 export const MIN_AUCTION_START_BID_CENTS = 50;
 export const MIN_BID_INCREMENT_CENTS = 50;
 export const MIN_BID_INCREMENT_BPS = 500; // 5.00%
-export const ANTI_SNIPE_EXTENSION_SECONDS = 30;
 
 export const PRICE_POLLER_INTERVAL_MS = 5 * 60 * 1000;
 export const PRICE_POLLER_BATCH_SIZE = 250;
@@ -143,8 +142,12 @@ export const RATE_LIMITS = {
   packPurchasePerUser: { limit: 5, windowSeconds: 10 },
   packPurchasePerIp: { limit: 5, windowSeconds: 10 },
   placeBid: { limit: 10, windowSeconds: 10 },
+  placeBidPerAuctionPerUser: { limit: 3, windowSeconds: 10 },
   buyListing: { limit: 5, windowSeconds: 10 }
 } as const;
+
+// Phase 5 B3 fat-finger cap absolute floor ($10 in cents) — per source plan §5.
+export const FAT_FINGER_ABSOLUTE_FLOOR_CENTS = 1_000;
 
 export const ECONOMICS_DEFAULT_WINDOW_HOURS = resolveIntegerEnv(process.env.ECONOMICS_DEFAULT_WINDOW_HOURS, 24);
 export const ECONOMICS_MAX_WINDOW_DAYS = resolveIntegerEnv(process.env.ECONOMICS_MAX_WINDOW_DAYS, 31);
