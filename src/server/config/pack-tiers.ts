@@ -1,3 +1,4 @@
+import { PACK_TIERS as PACK_TIERS_ORDER } from "../../lib/types";
 import type { PackTier, PackTierConfig } from "../../lib/types";
 import { PACK_PRICE_CENTS } from "./constants";
 
@@ -6,19 +7,13 @@ export const PACK_TIER_CONFIGS: Record<PackTier, PackTierConfig> = {
     tier: "standard",
     displayName: "Standard",
     priceCents: PACK_PRICE_CENTS.standard,
-    cardsPerPack: 5,
+    cardsPerPack: 3,
     slots: [
       [{ rarity: "common", weight: 1.0 }],
       [{ rarity: "common", weight: 1.0 }],
-      [{ rarity: "uncommon", weight: 1.0 }],
       [
-        { rarity: "uncommon", weight: 0.8 },
-        { rarity: "rare", weight: 0.2 }
-      ],
-      [
-        { rarity: "rare", weight: 0.5 },
-        { rarity: "holo_rare", weight: 0.4 },
-        { rarity: "ultra_rare", weight: 0.1 }
+        { rarity: "uncommon", weight: 0.9 },
+        { rarity: "rare", weight: 0.1 }
       ]
     ]
   },
@@ -26,24 +21,14 @@ export const PACK_TIER_CONFIGS: Record<PackTier, PackTierConfig> = {
     tier: "premium",
     displayName: "Premium",
     priceCents: PACK_PRICE_CENTS.premium,
-    cardsPerPack: 7,
+    cardsPerPack: 4,
     slots: [
       [{ rarity: "common", weight: 1.0 }],
       [{ rarity: "uncommon", weight: 1.0 }],
       [{ rarity: "uncommon", weight: 1.0 }],
-      [{ rarity: "rare", weight: 1.0 }],
       [
-        { rarity: "rare", weight: 0.6 },
-        { rarity: "holo_rare", weight: 0.4 }
-      ],
-      [
-        { rarity: "holo_rare", weight: 0.82 },
-        { rarity: "ultra_rare", weight: 0.18 }
-      ],
-      [
-        { rarity: "holo_rare", weight: 0.52 },
-        { rarity: "ultra_rare", weight: 0.45 },
-        { rarity: "chase", weight: 0.03 }
+        { rarity: "rare", weight: 0.9 },
+        { rarity: "ultra_rare", weight: 0.1 }
       ]
     ]
   },
@@ -51,36 +36,21 @@ export const PACK_TIER_CONFIGS: Record<PackTier, PackTierConfig> = {
     tier: "elite",
     displayName: "Elite",
     priceCents: PACK_PRICE_CENTS.elite,
-    cardsPerPack: 10,
+    cardsPerPack: 5,
     slots: [
       [{ rarity: "common", weight: 1.0 }],
       [{ rarity: "uncommon", weight: 1.0 }],
-      [{ rarity: "uncommon", weight: 1.0 }],
       [{ rarity: "rare", weight: 1.0 }],
       [{ rarity: "rare", weight: 1.0 }],
       [
-        { rarity: "rare", weight: 0.5 },
-        { rarity: "holo_rare", weight: 0.5 }
-      ],
-      [{ rarity: "holo_rare", weight: 1.0 }],
-      [
-        { rarity: "holo_rare", weight: 0.8 },
-        { rarity: "ultra_rare", weight: 0.2 }
-      ],
-      [
-        { rarity: "holo_rare", weight: 0.7 },
-        { rarity: "ultra_rare", weight: 0.28 },
-        { rarity: "chase", weight: 0.02 }
-      ],
-      [
-        { rarity: "ultra_rare", weight: 0.7 },
-        { rarity: "chase", weight: 0.3 }
+        { rarity: "rare", weight: 0.9 },
+        { rarity: "ultra_rare", weight: 0.1 }
       ]
     ]
   }
 };
 
-export const PACK_TIERS: PackTier[] = ["standard", "premium", "elite"];
+export const PACK_TIERS: PackTier[] = [...PACK_TIERS_ORDER];
 
 function validatePackTierConfigs(): void {
   for (const tier of PACK_TIERS) {

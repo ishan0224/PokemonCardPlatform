@@ -1,0 +1,181 @@
+{
+  "id": "phase1-b4-canonical-premium-pack-v1",
+  "tier": "premium",
+  "inputs": {
+    "serverSeedHex": "0123456789abcdeffedcba98765432100123456789abcdeffedcba9876543210",
+    "clientSeedHex": "00112233445566778899aabbccddeeff",
+    "nonce": "42",
+    "slots": [
+      ["common", "uncommon", "rare"],
+      ["common", "uncommon", "rare"],
+      ["common", "uncommon", "rare"],
+      ["uncommon", "rare", "holo_rare"],
+      ["rare", "holo_rare", "ultra_rare"],
+      ["holo_rare", "ultra_rare", "chase"],
+      ["rare", "holo_rare", "ultra_rare", "chase"]
+    ],
+    "eligibleCardIdsByRarity": {
+      "common": ["card-c-001", "card-c-002", "card-c-003", "card-c-004"],
+      "uncommon": ["card-u-001", "card-u-002", "card-u-003", "card-u-004"],
+      "rare": ["card-r-001", "card-r-002", "card-r-003", "card-r-004"],
+      "holo_rare": ["card-h-001", "card-h-002", "card-h-003", "card-h-004"],
+      "ultra_rare": ["card-x-001", "card-x-002", "card-x-003"],
+      "chase": ["card-z-001", "card-z-002"]
+    },
+    "enforceUniqueCards": true
+  },
+  "expected": {
+    "cards": [
+      {
+        "slotNumber": 1,
+        "rarityTier": "common",
+        "pokemonCardId": "card-c-001"
+      },
+      {
+        "slotNumber": 2,
+        "rarityTier": "uncommon",
+        "pokemonCardId": "card-u-004"
+      },
+      {
+        "slotNumber": 3,
+        "rarityTier": "rare",
+        "pokemonCardId": "card-r-002"
+      },
+      {
+        "slotNumber": 4,
+        "rarityTier": "holo_rare",
+        "pokemonCardId": "card-h-004"
+      },
+      {
+        "slotNumber": 5,
+        "rarityTier": "rare",
+        "pokemonCardId": "card-r-003"
+      },
+      {
+        "slotNumber": 6,
+        "rarityTier": "chase",
+        "pokemonCardId": "card-z-001"
+      },
+      {
+        "slotNumber": 7,
+        "rarityTier": "rare",
+        "pokemonCardId": "card-r-004"
+      }
+    ],
+    "drawCounterConsumed": "14",
+    "drawTranscript": [
+      {
+        "drawCounterBefore": "0",
+        "drawType": "rarity",
+        "slotNumber": 1,
+        "modulus": 3,
+        "accepted": true,
+        "selectedIndex": 0
+      },
+      {
+        "drawCounterBefore": "1",
+        "drawType": "card_index",
+        "slotNumber": 1,
+        "modulus": 4,
+        "accepted": true,
+        "selectedIndex": 0
+      },
+      {
+        "drawCounterBefore": "2",
+        "drawType": "rarity",
+        "slotNumber": 2,
+        "modulus": 3,
+        "accepted": true,
+        "selectedIndex": 1
+      },
+      {
+        "drawCounterBefore": "3",
+        "drawType": "card_index",
+        "slotNumber": 2,
+        "modulus": 4,
+        "accepted": true,
+        "selectedIndex": 3
+      },
+      {
+        "drawCounterBefore": "4",
+        "drawType": "rarity",
+        "slotNumber": 3,
+        "modulus": 3,
+        "accepted": true,
+        "selectedIndex": 2
+      },
+      {
+        "drawCounterBefore": "5",
+        "drawType": "card_index",
+        "slotNumber": 3,
+        "modulus": 4,
+        "accepted": true,
+        "selectedIndex": 1
+      },
+      {
+        "drawCounterBefore": "6",
+        "drawType": "rarity",
+        "slotNumber": 4,
+        "modulus": 3,
+        "accepted": true,
+        "selectedIndex": 2
+      },
+      {
+        "drawCounterBefore": "7",
+        "drawType": "card_index",
+        "slotNumber": 4,
+        "modulus": 4,
+        "accepted": true,
+        "selectedIndex": 3
+      },
+      {
+        "drawCounterBefore": "8",
+        "drawType": "rarity",
+        "slotNumber": 5,
+        "modulus": 3,
+        "accepted": true,
+        "selectedIndex": 0
+      },
+      {
+        "drawCounterBefore": "9",
+        "drawType": "card_index",
+        "slotNumber": 5,
+        "modulus": 4,
+        "accepted": true,
+        "selectedIndex": 2
+      },
+      {
+        "drawCounterBefore": "10",
+        "drawType": "rarity",
+        "slotNumber": 6,
+        "modulus": 3,
+        "accepted": true,
+        "selectedIndex": 2
+      },
+      {
+        "drawCounterBefore": "11",
+        "drawType": "card_index",
+        "slotNumber": 6,
+        "modulus": 2,
+        "accepted": true,
+        "selectedIndex": 0
+      },
+      {
+        "drawCounterBefore": "12",
+        "drawType": "rarity",
+        "slotNumber": 7,
+        "modulus": 4,
+        "accepted": true,
+        "selectedIndex": 0
+      },
+      {
+        "drawCounterBefore": "13",
+        "drawType": "card_index",
+        "slotNumber": 7,
+        "modulus": 4,
+        "accepted": true,
+        "selectedIndex": 3
+      }
+    ]
+  }
+}

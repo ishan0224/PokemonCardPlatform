@@ -49,10 +49,12 @@ function resolvePriceSelectionModeEnv(
 }
 
 export const PACK_PRICE_CENTS: Record<PackTier, number> = {
-  standard: 500,
-  premium: 2_000,
-  elite: 5_000
+  standard: 2_499,
+  premium: 8_999,
+  elite: 18_999
 };
+
+export const STARTING_BALANCE_CENTS = 25_000;
 
 export const DROP_INVENTORY_DEFAULT: Record<PackTier, number> = {
   standard: 10,

@@ -8,6 +8,9 @@ const POKEMON_TCG_API_KEY = process.env.POKEMON_TCG_API_KEY;
 const PAGE_SIZE = 250;
 const MAX_PAGES = 80;
 const MIN_PER_RARITY = 30;
+const FETCH_TIMEOUT_MS = Number(process.env.POKEMON_TCG_FETCH_TIMEOUT_MS ?? 20_000);
+const FETCH_RETRY_ATTEMPTS = Number(process.env.POKEMON_TCG_FETCH_RETRY_ATTEMPTS ?? 4);
+const FETCH_RETRY_BASE_DELAY_MS = Number(process.env.POKEMON_TCG_FETCH_RETRY_BASE_DELAY_MS ?? 1_500);
 
 const REQUIRED_RARITIES: RarityTier[] = ["common", "uncommon", "rare", "holo_rare", "ultra_rare", "chase"];
 
@@ -43,6 +46,10 @@ type TcgApiResponse = {
   page: number;
   pageSize: number;
 };
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function mapRarityTier(rawRarity: string | undefined): RarityTier | null {
   if (!rawRarity) {
@@ -142,17 +149,50 @@ async function fetchCardsPage(page: number): Promise<TcgApiResponse> {
     headers["X-Api-Key"] = POKEMON_TCG_API_KEY;
   }
 
-  const response = await fetch(url.toString(), {
-    method: "GET",
-    headers,
-    signal: AbortSignal.timeout(20_000)
-  });
+  let lastError: unknown = null;
 
-  if (!response.ok) {
-    throw new Error(`Pokemon TCG API request failed (${response.status} ${response.statusText}).`);
+  for (let attempt = 1; attempt <= FETCH_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch(url.toString(), {
+        method: "GET",
+        headers,
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+      });
+
+      if (response.ok) {
+        return (await response.json()) as TcgApiResponse;
+      }
+
+      if (response.status === 429 || response.status >= 500) {
+        const retryAfterSeconds = Number(response.headers.get("retry-after") ?? "0");
+        const retryAfterMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0 ? retryAfterSeconds * 1_000 : 0;
+        const backoffMs = Math.max(retryAfterMs, FETCH_RETRY_BASE_DELAY_MS * attempt);
+        console.warn(
+          `[card-seeder] fetch page ${page} attempt ${attempt}/${FETCH_RETRY_ATTEMPTS} failed with ${response.status}. Retrying in ${backoffMs}ms.`
+        );
+        await sleep(backoffMs);
+        continue;
+      }
+
+      throw new Error(`Pokemon TCG API request failed (${response.status} ${response.statusText}).`);
+    } catch (error) {
+      lastError = error;
+      const isFinalAttempt = attempt >= FETCH_RETRY_ATTEMPTS;
+      if (isFinalAttempt) {
+        break;
+      }
+      const backoffMs = FETCH_RETRY_BASE_DELAY_MS * attempt;
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[card-seeder] fetch page ${page} attempt ${attempt}/${FETCH_RETRY_ATTEMPTS} failed (${reason}). Retrying in ${backoffMs}ms.`
+      );
+      await sleep(backoffMs);
+    }
   }
 
-  return (await response.json()) as TcgApiResponse;
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`Pokemon TCG API request failed after ${FETCH_RETRY_ATTEMPTS} attempts.`);
 }
 
 async function upsertCard(card: TcgApiCard, rarityTier: RarityTier): Promise<void> {

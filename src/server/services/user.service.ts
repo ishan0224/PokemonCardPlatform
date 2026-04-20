@@ -1,4 +1,5 @@
 import { query } from "../db/pool";
+import { STARTING_BALANCE_CENTS } from "../config/constants";
 
 export type UserRole = "user" | "admin";
 
@@ -73,14 +74,14 @@ export async function upsertAppUserProfile(input: {
 
   try {
     const result = await query<{ id: string; username: string; email: string; balance: string; role: string }>(
-      `INSERT INTO users (id, username, email)
-       VALUES ($1, COALESCE($2, $3), $4)
+      `INSERT INTO users (id, username, email, balance)
+       VALUES ($1, COALESCE($2, $3), $4, $5)
        ON CONFLICT (id)
        DO UPDATE
        SET username = CASE WHEN $2 IS NULL THEN users.username ELSE EXCLUDED.username END,
            email = EXCLUDED.email
        RETURNING id, username, email, balance, role`,
-      [input.id, normalizedUsername, fallbackUsername, input.email]
+      [input.id, normalizedUsername, fallbackUsername, input.email, STARTING_BALANCE_CENTS]
     );
 
     return mapUserRow(result.rows[0]);
