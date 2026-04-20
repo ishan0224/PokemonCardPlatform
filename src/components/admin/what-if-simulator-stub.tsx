@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import type { PackEconomicsBundle, PackTierEconomics } from "@/lib/types";
-import { formatMoneyCents, formatPlainPercentBps, formatSignedMoneyCents } from "@/lib/format";
+import { apiClient, mapApiErrorToMessage } from "@/lib/api-client";
+import type { EconomicsSimulation, PackEconomicsBundle, PackTierEconomics } from "@/lib/types";
+import { formatMoneyCents, formatPercentBps, formatPlainPercentBps, formatSignedMoneyCents } from "@/lib/format";
 
 type WhatIfSimulatorStubProps = {
   bundle: PackEconomicsBundle;
@@ -13,6 +14,9 @@ export function WhatIfSimulatorStub({ bundle }: WhatIfSimulatorStubProps): JSX.E
   const [ultraRareWeight, setUltraRareWeight] = useState(1.5);
   const [chaseCap, setChaseCap] = useState<0 | 1 | 2>(1);
   const [auctionFeeBps, setAuctionFeeBps] = useState(800);
+  const [simulating, setSimulating] = useState(false);
+  const [simulationError, setSimulationError] = useState<string | null>(null);
+  const [simulation, setSimulation] = useState<EconomicsSimulation | null>(null);
 
   const worstTier = bundle.tiers.reduce<PackTierEconomics | null>((acc, tier) => {
     if (tier.actualHouseEdgeBps === null) {
@@ -24,6 +28,27 @@ export function WhatIfSimulatorStub({ bundle }: WhatIfSimulatorStubProps): JSX.E
     return acc;
   }, null);
 
+  const ultraRareMaxWeight = ultraRareWeight / 100;
+  const chaseMaxWeight = chaseCap === 0 ? 0 : chaseCap === 1 ? 0.03 : 0.06;
+
+  const runSimulation = async (): Promise<void> => {
+    setSimulating(true);
+    setSimulationError(null);
+
+    try {
+      const result = await apiClient.simulateEconomics({
+        anchorScale,
+        ultraRareMaxWeight,
+        chaseMaxWeight
+      });
+      setSimulation(result);
+    } catch (error) {
+      setSimulationError(mapApiErrorToMessage(error) || "Failed to run economics simulation.");
+    } finally {
+      setSimulating(false);
+    }
+  };
+
   return (
     <section className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_minmax(280px,420px)]">
       <div className="rounded-2xl border border-slate-200 bg-white p-6">
@@ -31,11 +56,11 @@ export function WhatIfSimulatorStub({ bundle }: WhatIfSimulatorStubProps): JSX.E
           <div>
             <h2 className="text-sm font-bold uppercase tracking-widest text-slate-500">What-if simulator</h2>
             <p className="mt-1 text-xs text-slate-500">
-              Proposed knobs for the next pack-economics tweak. Run-projection is deferred (see plan §5).
+              Run `/api/admin/economics/simulate` with candidate knobs against current anchors.
             </p>
           </div>
-          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
-            deferred
+          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+            live
           </span>
         </div>
 
@@ -55,7 +80,7 @@ export function WhatIfSimulatorStub({ bundle }: WhatIfSimulatorStubProps): JSX.E
               className="mt-1 w-full accent-indigo-500"
             />
             <div className="mt-1 font-mono text-[10px] text-slate-500">
-              Multiplier applied hypothetically to every rarity anchor.
+              Multiplier applied to live rarity price anchors before simulation.
             </div>
           </div>
 
@@ -73,7 +98,9 @@ export function WhatIfSimulatorStub({ bundle }: WhatIfSimulatorStubProps): JSX.E
               onChange={(event) => setUltraRareWeight(Number(event.target.value))}
               className="mt-1 w-full accent-indigo-500"
             />
-            <div className="mt-1 font-mono text-[10px] text-slate-500">Trims the fat tail without flattening excitement.</div>
+            <div className="mt-1 font-mono text-[10px] text-slate-500">
+              Applied as solver cap for ultra-rare slot weight.
+            </div>
           </div>
 
           <div>
@@ -114,7 +141,7 @@ export function WhatIfSimulatorStub({ bundle }: WhatIfSimulatorStubProps): JSX.E
               onChange={(event) => setAuctionFeeBps(Number(event.target.value))}
               className="mt-1 w-full accent-indigo-500"
             />
-            <div className="mt-1 font-mono text-[10px] text-slate-500">HLD notes the platform must take a cut.</div>
+            <div className="mt-1 font-mono text-[10px] text-slate-500">Displayed only. Fee tuning is outside Phase 3.</div>
           </div>
         </div>
 
@@ -122,20 +149,20 @@ export function WhatIfSimulatorStub({ bundle }: WhatIfSimulatorStubProps): JSX.E
           <div className="flex items-center justify-between">
             <div className="font-mono text-[10px] uppercase tracking-wider text-slate-500">Projection preview</div>
             <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wider text-amber-700">
-              illustrative
+              solver output
             </span>
           </div>
           <p className="mt-2 text-[11px] text-slate-600">
-            A real rerun requires a Monte-Carlo resampler against the rarity weights + anchor map. Not wired up in Phase 8 —
-            see <span className="font-mono">docs/phase-8-implementation-plan.md</span> §5.
+            Runs deterministic B1 simulation (10k rolls/tier) and returns EV distribution + projected margins.
           </p>
           <div className="mt-4 flex gap-2 text-xs">
             <button
               type="button"
-              disabled
-              className="cursor-not-allowed rounded-lg bg-slate-300 px-3 py-1.5 font-semibold text-slate-600"
+              onClick={() => void runSimulation()}
+              disabled={simulating}
+              className="rounded-lg bg-slate-900 px-3 py-1.5 font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
             >
-              Run projection (deferred)
+              {simulating ? "Running projection..." : "Run projection"}
             </button>
             <button
               type="button"
@@ -144,12 +171,71 @@ export function WhatIfSimulatorStub({ bundle }: WhatIfSimulatorStubProps): JSX.E
                 setUltraRareWeight(1.5);
                 setChaseCap(1);
                 setAuctionFeeBps(800);
+                setSimulation(null);
+                setSimulationError(null);
               }}
               className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold hover:bg-slate-50"
             >
               Reset
             </button>
           </div>
+
+          {simulationError ? (
+            <p className="mt-3 rounded-lg bg-rose-50 p-2 text-xs font-semibold text-rose-700">{simulationError}</p>
+          ) : null}
+
+          {simulation ? (
+            <div className="mt-4 space-y-2">
+              <div className="rounded-lg border border-slate-200 bg-white p-2 text-[11px] text-slate-600">
+                anchor source: <span className="font-mono">{simulation.anchorSource}</span> · missing prices{" "}
+                <span className="font-semibold">
+                  {Object.values(simulation.anchorSnapshotMeta.byRarity).reduce(
+                    (sum, rarityMeta) => sum + rarityMeta.missingPriceCount,
+                    0
+                  )}
+                </span>
+              </div>
+              {simulation.tiers.map((tier) => (
+                <div key={tier.tier} className="rounded-lg border border-slate-200 bg-white p-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-600">{tier.tier}</p>
+                    <div className="flex items-center gap-1">
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                          tier.constraintsSatisfied ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+                        }`}
+                      >
+                        {tier.constraintsSatisfied ? "feasible" : "constraint fail"}
+                      </span>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                          tier.aggressiveEdgeWarning
+                            ? "bg-amber-100 text-amber-800"
+                            : tier.edgeDeltaBps < 0
+                            ? "bg-rose-100 text-rose-800"
+                            : "bg-sky-100 text-sky-800"
+                        }`}
+                      >
+                        {tier.aggressiveEdgeWarning
+                          ? `aggressive ${formatPercentBps(tier.edgeDeltaBps)}`
+                          : tier.edgeDeltaBps < 0
+                          ? `below ${formatPercentBps(tier.edgeDeltaBps)}`
+                          : "target corridor"}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-600">
+                    mean EV {formatMoneyCents(Math.round(tier.meanEV))} · win rate {(tier.winRate * 100).toFixed(2)}% · p50{" "}
+                    {formatMoneyCents(Math.round(tier.p50))}
+                  </p>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    target {formatPlainPercentBps(tier.targetEdgeBps)} · achieved {formatPlainPercentBps(tier.achievedEdgeBps)} · delta{" "}
+                    {formatPercentBps(tier.edgeDeltaBps)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       </div>
 

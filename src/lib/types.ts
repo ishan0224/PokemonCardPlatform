@@ -108,6 +108,7 @@ export interface PackTierEconomics {
   worstMarginCents: MoneyCents | null;
   targetHouseEdgeBps: number;
   anchorSource: "live" | "config" | "mixed";
+  anchorFallbackRarities?: RarityTier[];
 }
 
 export interface WorstPack {
@@ -157,4 +158,142 @@ export interface PackEconomicsBundle {
   worstPacks: WorstPack[];
   topAuctions: TopAuction[];
   integrity: IntegrityChecks;
+}
+
+export interface EconomicsSimulationTier {
+  tier: PackTier;
+  weights: SlotDistribution[][];
+  meanEV: number;
+  stdDev: number;
+  winRate: number;
+  p10: number;
+  p50: number;
+  p90: number;
+  projectedMarginOver1000Packs: number;
+  targetEdge: number;
+  achievedEdge: number;
+  targetEdgeBps: number;
+  achievedEdgeBps: number;
+  edgeDeltaBps: number;
+  aggressiveEdgeWarning: boolean;
+  constraintsSatisfied: boolean;
+  failure: {
+    tier: PackTier;
+    stage: "feasibility" | "optimization";
+    code: string;
+    message: string;
+    violatedConstraints: string[];
+    nearestFeasibleGap: {
+      edgeGap: number;
+      winRateGap: number;
+      feasibilityDistance: number;
+    };
+    details?: Record<string, unknown>;
+  } | null;
+}
+
+export interface EconomicsSimulation {
+  tiers: EconomicsSimulationTier[];
+  generatedAtIso: string;
+  sourceGenerationVersionId: string;
+  anchorSource: "live_current_price_eligible_catalog";
+  anchorSnapshotMeta: {
+    source: "live_current_price_eligible_catalog";
+    fallbackApplied: false;
+    byRarity: Record<
+      RarityTier,
+      {
+        eligibleCardCount: number;
+        pricedCardCount: number;
+        missingPriceCount: number;
+        meanPriceCents: number | null;
+        minPriceCents: number | null;
+        maxPriceCents: number | null;
+      }
+    >;
+  };
+}
+
+export interface EconomicsGenerationVersion {
+  id: UUID;
+  versionNumber: number;
+  algorithmVersion: string;
+  contentHash: string;
+  createdAt: string;
+}
+
+export interface EconomicsGenerationVersionPage {
+  versions: EconomicsGenerationVersion[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
+export interface EconomicsRebalanceResult {
+  action: "no_op" | "inserted";
+  version: {
+    id: UUID;
+    versionNumber: number;
+    algorithmVersion: string;
+    contentHash: string;
+  };
+  tierFailures: Array<{
+    tier: PackTier;
+    stage: "feasibility" | "optimization";
+    code: string;
+    message: string;
+    violatedConstraints: string[];
+    nearestFeasibleGap: {
+      edgeGap: number;
+      winRateGap: number;
+      feasibilityDistance: number;
+    };
+    details?: Record<string, unknown>;
+  }>;
+  anchorSource: "live_current_price_eligible_catalog";
+  anchorSnapshotMeta: {
+    source: "live_current_price_eligible_catalog";
+    fallbackApplied: false;
+    byRarity: Record<
+      RarityTier,
+      {
+        eligibleCardCount: number;
+        pricedCardCount: number;
+        missingPriceCount: number;
+        meanPriceCents: number | null;
+        minPriceCents: number | null;
+        maxPriceCents: number | null;
+      }
+    >;
+  };
+  diagnosticsByTier?: Record<
+    PackTier,
+    {
+      achievedEdge: number;
+      targetEdge: number;
+      achievedEdgeBps: number;
+      targetEdgeBps: number;
+      edgeDeltaBps: number;
+      aggressiveEdgeWarning: boolean;
+      winRateFloor: number;
+      distribution: {
+        meanEV: number;
+        stdDev: number;
+        p10: number;
+        p50: number;
+        p90: number;
+        winRate: number;
+        projectedMarginOver1000Packs: number;
+      };
+      violatedConstraints: string[];
+      nearestFeasibleGap: {
+        edgeGap: number;
+        winRateGap: number;
+        feasibilityDistance: number;
+      };
+    }
+  >;
 }

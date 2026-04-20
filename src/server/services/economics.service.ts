@@ -26,6 +26,7 @@ import type {
   TopAuction,
   WorstPack
 } from "../../lib/types";
+import { RARITY_TIERS } from "../../lib/types";
 
 const REVENUE_STREAM_KEYS: readonly RevenueStreamKey[] = [
   "pack_margin",
@@ -360,7 +361,10 @@ async function fetchPerTierMargin(params: WindowParams): Promise<Map<PackTier, P
   return map;
 }
 
-async function fetchRarityAnchors(): Promise<Record<RarityTier, number>> {
+async function fetchRarityAnchors(): Promise<{
+  anchors: Record<RarityTier, number>;
+  sourceByRarity: Record<RarityTier, "live" | "fallback">;
+}> {
   const result = await query<{ rarity_tier: RarityTier; anchor: string }>(
     `SELECT rarity_tier::text AS rarity_tier,
             COALESCE(AVG(current_price), 0)::BIGINT AS anchor
@@ -369,13 +373,20 @@ async function fetchRarityAnchors(): Promise<Record<RarityTier, number>> {
   );
 
   const anchors = { ...RARITY_ANCHOR_FALLBACK_CENTS };
+  const sourceByRarity = {} as Record<RarityTier, "live" | "fallback">;
+  for (const rarity of RARITY_TIERS) {
+    sourceByRarity[rarity] = "fallback";
+  }
+
   for (const row of result.rows) {
     const value = Number(row.anchor);
     if (value > 0) {
       anchors[row.rarity_tier] = value;
+      sourceByRarity[row.rarity_tier] = "live";
     }
   }
-  return anchors;
+
+  return { anchors, sourceByRarity };
 }
 
 function computeTheoreticalEvCents(tier: PackTier, anchors: Record<RarityTier, number>): number {
@@ -395,13 +406,27 @@ export async function getPackEconomics(params: WindowParams): Promise<{
   tiers: PackTierEconomics[];
   portfolio: PackEconomicsBundle["portfolio"];
 }> {
-  const [marginByTier, anchors] = await Promise.all([fetchPerTierMargin(params), fetchRarityAnchors()]);
+  const [marginByTier, anchorResult] = await Promise.all([fetchPerTierMargin(params), fetchRarityAnchors()]);
+  const { anchors, sourceByRarity } = anchorResult;
 
   const tiers: PackTierEconomics[] = PACK_TIERS.map((tier) => {
     const config = PACK_TIER_CONFIGS[tier];
     const priceCents = config.priceCents;
     const theoreticalEv = computeTheoreticalEvCents(tier, anchors);
     const theoreticalEdgeBps = bpsFromRatio(priceCents - theoreticalEv, priceCents);
+    const usedRarities = new Set<RarityTier>();
+    for (const slot of config.slots) {
+      for (const entry of slot) {
+        usedRarities.add(entry.rarity);
+      }
+    }
+    const fallbackRarities = [...usedRarities].filter((rarity) => sourceByRarity[rarity] === "fallback");
+    const anchorSource: PackTierEconomics["anchorSource"] =
+      fallbackRarities.length === 0
+        ? "live"
+        : fallbackRarities.length === usedRarities.size
+        ? "config"
+        : "mixed";
 
     const row = marginByTier.get(tier);
     if (!row) {
@@ -419,7 +444,8 @@ export async function getPackEconomics(params: WindowParams): Promise<{
         bestMarginCents: null,
         worstMarginCents: null,
         targetHouseEdgeBps: TARGET_HOUSE_EDGE_BPS[tier],
-        anchorSource: "live"
+        anchorSource,
+        anchorFallbackRarities: fallbackRarities.length > 0 ? fallbackRarities : undefined
       };
     }
 
@@ -441,7 +467,8 @@ export async function getPackEconomics(params: WindowParams): Promise<{
       bestMarginCents: Number(row.best_margin),
       worstMarginCents: Number(row.worst_margin),
       targetHouseEdgeBps: TARGET_HOUSE_EDGE_BPS[tier],
-      anchorSource: "live"
+      anchorSource,
+      anchorFallbackRarities: fallbackRarities.length > 0 ? fallbackRarities : undefined
     };
   });
 
