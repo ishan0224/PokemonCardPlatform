@@ -41,6 +41,8 @@ type PokemonCardCatalogRow = {
   rarity_tier: RarityTier;
   liquidity_tier: "high" | "medium" | "low" | "illiquid" | null;
   current_price: string;
+  last_price_source: PriceSourceType | null;
+  last_external_price_at: string | null;
 };
 
 type UpdatedPokemonCardRow = {
@@ -386,7 +388,14 @@ async function readCatalogRowsByIds(pokemonCardIds: string[]): Promise<PokemonCa
   }
 
   const result = await query<PokemonCardCatalogRow>(
-    `SELECT pc.id, pc.tcg_id, pc.set_id, pc.rarity_tier, pc.liquidity_tier, pc.current_price
+    `SELECT pc.id,
+            pc.tcg_id,
+            pc.set_id,
+            pc.rarity_tier,
+            pc.liquidity_tier,
+            pc.current_price,
+            pc.last_price_source,
+            pc.last_external_price_at
      FROM unnest($1::uuid[]) WITH ORDINALITY AS selected(pokemon_card_id, ord)
      JOIN pokemon_cards pc ON pc.id = selected.pokemon_card_id
      ORDER BY selected.ord ASC`,
@@ -413,7 +422,14 @@ async function readCatalogBatch(
 
   if (!cursor) {
     const fromStart = await query<PokemonCardCatalogRow>(
-      `SELECT id, tcg_id, set_id, rarity_tier, liquidity_tier, current_price
+      `SELECT id,
+              tcg_id,
+              set_id,
+              rarity_tier,
+              liquidity_tier,
+              current_price,
+              last_price_source,
+              last_external_price_at
        FROM pokemon_cards
        WHERE NOT (id = ANY($2::uuid[]))
        ORDER BY id ASC
@@ -429,7 +445,14 @@ async function readCatalogBatch(
   }
 
   const afterCursor = await query<PokemonCardCatalogRow>(
-    `SELECT id, tcg_id, set_id, rarity_tier, liquidity_tier, current_price
+    `SELECT id,
+            tcg_id,
+            set_id,
+            rarity_tier,
+            liquidity_tier,
+            current_price,
+            last_price_source,
+            last_external_price_at
      FROM pokemon_cards
      WHERE id > $1
        AND NOT (id = ANY($3::uuid[]))
@@ -450,7 +473,14 @@ async function readCatalogBatch(
   const fromStart =
     remaining > 0
       ? await query<PokemonCardCatalogRow>(
-          `SELECT id, tcg_id, set_id, rarity_tier, liquidity_tier, current_price
+          `SELECT id,
+                  tcg_id,
+                  set_id,
+                  rarity_tier,
+                  liquidity_tier,
+                  current_price,
+                  last_price_source,
+                  last_external_price_at
            FROM pokemon_cards
            WHERE id <= $1
              AND NOT (id = ANY($3::uuid[]))
@@ -702,6 +732,16 @@ async function resolvePriceSource(rows: PokemonCardCatalogRow[]): Promise<Resolv
     if (typeof externalPrice === "number" && externalPrice > 0) {
       priceByPokemonCardId.set(row.id, {
         nextPrice: externalPrice,
+        source: "external"
+      });
+      continue;
+    }
+
+    // Never degrade previously external-priced cards to simulated when an external
+    // quote is temporarily unavailable in this poll cycle.
+    if (row.last_price_source === "external" || row.last_external_price_at !== null) {
+      priceByPokemonCardId.set(row.id, {
+        nextPrice: Math.max(toMoneyCents(row.current_price), 1),
         source: "external"
       });
       continue;

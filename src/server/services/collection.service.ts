@@ -123,6 +123,15 @@ function buildPriceFallbackMap(rows: PokemonCardPriceRow[]): Map<string, Pokemon
   return fallbackMap;
 }
 
+function toEpochMs(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 async function resolveReadThroughPrices(pokemonCardIds: string[]): Promise<Map<string, PokemonCardPriceCacheValue>> {
   const resolved = new Map<string, PokemonCardPriceCacheValue>();
   if (pokemonCardIds.length === 0) {
@@ -131,34 +140,51 @@ async function resolveReadThroughPrices(pokemonCardIds: string[]): Promise<Map<s
 
   const uniqueIds = Array.from(new Set(pokemonCardIds));
   const cachedMap = await getPokemonCardPriceCacheMany(uniqueIds);
-  const missingIds = uniqueIds.filter((pokemonCardId) => !cachedMap.has(pokemonCardId));
-  let fallbackMap = new Map<string, PokemonCardPriceCacheValue>();
+  const fallbackRows = await query<PokemonCardPriceRow>(
+    `SELECT id, current_price, previous_price, last_price_update
+     FROM pokemon_cards
+     WHERE id = ANY($1::uuid[])`,
+    [uniqueIds]
+  );
+  const fallbackMap = buildPriceFallbackMap(fallbackRows.rows);
+  const fallbackLastUpdateById = new Map<string, number | null>();
 
-  if (missingIds.length > 0) {
-    const fallbackRows = await query<PokemonCardPriceRow>(
-      `SELECT id, current_price, previous_price, last_price_update
-       FROM pokemon_cards
-       WHERE id = ANY($1::uuid[])`,
-      [missingIds]
-    );
-    fallbackMap = buildPriceFallbackMap(fallbackRows.rows);
+  for (const row of fallbackRows.rows) {
+    fallbackLastUpdateById.set(row.id, toEpochMs(row.last_price_update));
   }
 
   const cacheFillOps: Array<Promise<void>> = [];
   for (const pokemonCardId of uniqueIds) {
     const cached = cachedMap.get(pokemonCardId);
-    if (cached) {
-      resolved.set(pokemonCardId, cached);
-      continue;
-    }
-
     const fallback = fallbackMap.get(pokemonCardId);
+
     if (!fallback) {
+      if (cached) {
+        resolved.set(pokemonCardId, cached);
+      }
       continue;
     }
 
-    resolved.set(pokemonCardId, fallback);
-    cacheFillOps.push(setPokemonCardPriceCache(pokemonCardId, fallback, PRICE_CACHE_TTL_SECONDS));
+    if (!cached) {
+      resolved.set(pokemonCardId, fallback);
+      cacheFillOps.push(setPokemonCardPriceCache(pokemonCardId, fallback, PRICE_CACHE_TTL_SECONDS));
+      continue;
+    }
+
+    const fallbackUpdatedAt = fallbackLastUpdateById.get(pokemonCardId) ?? null;
+    const cachedUpdatedAt = toEpochMs(cached.updatedAt);
+    const cacheValuesMismatch =
+      cached.currentPrice !== fallback.currentPrice || cached.previousPrice !== fallback.previousPrice;
+    const cacheIsOlderThanDb =
+      fallbackUpdatedAt !== null && (cachedUpdatedAt === null || cachedUpdatedAt < fallbackUpdatedAt);
+
+    if (cacheValuesMismatch || cacheIsOlderThanDb) {
+      resolved.set(pokemonCardId, fallback);
+      cacheFillOps.push(setPokemonCardPriceCache(pokemonCardId, fallback, PRICE_CACHE_TTL_SECONDS));
+      continue;
+    }
+
+    resolved.set(pokemonCardId, cached);
   }
 
   await Promise.allSettled(cacheFillOps);
