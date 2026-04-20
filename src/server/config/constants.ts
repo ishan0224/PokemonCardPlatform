@@ -158,10 +158,15 @@ export const RARITY_ANCHOR_FALLBACK_CENTS: Record<RarityTier, number> = {
 };
 
 export const TARGET_HOUSE_EDGE_BPS: Record<PackTier, number> = {
-  standard: 2_700,
-  premium: 1_785,
-  elite: 1_558
+  standard: 3_090,
+  premium: 2_089,
+  elite: 1_699
 };
+
+export const ECONOMICS_EDGE_OVERSHOOT_WARN_BPS = resolveIntegerEnv(
+  process.env.ECONOMICS_EDGE_OVERSHOOT_WARN_BPS,
+  1_000
+);
 
 export const ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS = resolveIntegerEnv(
   process.env.ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS,

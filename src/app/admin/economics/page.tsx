@@ -13,6 +13,7 @@ import { RevenueTimeChart } from "@/components/admin/revenue-time-chart";
 import { TopAuctionsList } from "@/components/admin/top-auctions-list";
 import { StatusPanel } from "@/components/admin/status-panel";
 import { WorstPacksList } from "@/components/admin/worst-packs-list";
+import { WhatIfSimulatorStub } from "@/components/admin/what-if-simulator-stub";
 
 const PRESET_DURATION_MS: Record<WindowPreset, number> = {
   "1h": 60 * 60 * 1000,
@@ -185,6 +186,8 @@ export default function AdminEconomicsPage(): JSX.Element {
           </section>
 
           <PackTierTable tiers={state.bundle.tiers} portfolio={state.bundle.portfolio} />
+
+          <WhatIfSimulatorStub bundle={state.bundle} />
 
           <section className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-12">
             <div className="lg:col-span-5 lg:flex">

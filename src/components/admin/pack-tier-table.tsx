@@ -88,6 +88,12 @@ export function PackTierTable({ tiers, portfolio }: PackTierTableProps): JSX.Ele
                         <div className="font-mono text-[10px] uppercase tracking-wider text-slate-500">
                           target {formatPlainPercentBps(tier.targetHouseEdgeBps)}
                         </div>
+                        <div className="font-mono text-[10px] uppercase tracking-wider text-slate-500">
+                          anchors {tier.anchorSource}
+                          {tier.anchorFallbackRarities && tier.anchorFallbackRarities.length > 0
+                            ? ` (${tier.anchorFallbackRarities.join(",")})`
+                            : ""}
+                        </div>
                       </div>
                     </div>
                   </td>

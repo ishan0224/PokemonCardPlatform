@@ -3,6 +3,9 @@ import type {
   AuctionStatus,
   CardState,
   DropStatus,
+  EconomicsGenerationVersionPage,
+  EconomicsRebalanceResult,
+  EconomicsSimulation,
   EconomicsSummary,
   ListingStatus,
   PackEconomicsBundle,
@@ -609,6 +612,59 @@ export const apiClient = {
     }
     const query = params.toString();
     return requestJson(`/api/admin/economics/packs${query ? `?${query}` : ""}`, {
+      method: "GET",
+      signal
+    });
+  },
+
+  simulateEconomics(
+    input: {
+      anchorScale?: number;
+      ultraRareMaxWeight?: number;
+      chaseMaxWeight?: number;
+      targetEdgeByTier?: Partial<Record<PackTier, number>>;
+      winRateFloorByTier?: Partial<Record<PackTier, number>>;
+    } = {},
+    signal?: AbortSignal
+  ): Promise<EconomicsSimulation> {
+    return requestJson("/api/admin/economics/simulate", {
+      method: "POST",
+      body: JSON.stringify(input),
+      signal
+    });
+  },
+
+  rebalanceEconomics(
+    input: {
+      anchorScale?: number;
+      ultraRareMaxWeight?: number;
+      chaseMaxWeight?: number;
+      targetEdgeByTier?: Partial<Record<PackTier, number>>;
+      winRateFloorByTier?: Partial<Record<PackTier, number>>;
+    } = {},
+    signal?: AbortSignal
+  ): Promise<EconomicsRebalanceResult> {
+    return requestJson("/api/admin/economics/rebalance", {
+      method: "POST",
+      body: JSON.stringify(input),
+      signal
+    });
+  },
+
+  listEconomicsVersions(
+    input: { page?: number; limit?: number } = {},
+    signal?: AbortSignal
+  ): Promise<EconomicsGenerationVersionPage> {
+    const params = new URLSearchParams();
+    if (input.page) {
+      params.set("page", String(input.page));
+    }
+    if (input.limit) {
+      params.set("limit", String(input.limit));
+    }
+
+    const query = params.toString();
+    return requestJson(`/api/admin/economics/versions${query ? `?${query}` : ""}`, {
       method: "GET",
       signal
     });

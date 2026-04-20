@@ -26,6 +26,9 @@
     "test:partb:phase2:exit": "node --import tsx scripts/test-partb-phase2-exit.ts",
     "test:partb:phase2:http": "node --import tsx scripts/test-partb-phase2-http-smoke.ts",
     "test:partb:phase2": "npm run test:partb:phase1 && npm run test:partb:phase2:exit && npm run test:partb:phase2:http",
+    "test:partb:phase3": "vitest run src/server/economics/**/*.unit.test.ts",
+    "test:partb:phase3:integration": "vitest run src/server/economics/**/*.integration.test.ts",
+    "test:partb:phase3:all": "npm run test:partb:phase3 && npm run test:partb:phase3:integration",
     "test:n1:unit": "node --import tsx scripts/test-n1-deterministic.ts",
     "test:n1:hardening": "node --import tsx scripts/test-n1-hardening.ts",
     "test:n1:concurrency": "node --import tsx scripts/test-n1-concurrency-smoke.ts",
@@ -56,6 +59,7 @@
     "postcss": "^8.5.1",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
   }
 }
