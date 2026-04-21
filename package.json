@@ -51,8 +51,10 @@
     "pg": "^8.13.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-window": "^1.8.9",
     "socket.io": "^4.8.1",
-    "socket.io-client": "^4.8.3"
+    "socket.io-client": "^4.8.3",
+    "swr": "^2.4.1"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
@@ -60,6 +62,7 @@
     "@types/pg": "^8.11.10",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
+    "@types/react-window": "^1.8.8",
     "autoprefixer": "^10.4.20",
     "playwright-core": "^1.59.1",
     "postcss": "^8.5.1",

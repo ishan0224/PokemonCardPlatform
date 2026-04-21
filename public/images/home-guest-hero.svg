@@ -1,0 +1,39 @@
+<svg width="1600" height="1000" viewBox="0 0 1600 1000" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="1000" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#091631"/>
+      <stop offset="0.6" stop-color="#113B8C"/>
+      <stop offset="1" stop-color="#0C5FE6"/>
+    </linearGradient>
+    <radialGradient id="glowA" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1240 220) rotate(122) scale(420 320)">
+      <stop stop-color="#FFE08A" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#FFE08A" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowB" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(420 740) rotate(30) scale(520 300)">
+      <stop stop-color="#FCA5A5" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#FCA5A5" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1600" height="1000" rx="40" fill="url(#bg)"/>
+  <ellipse cx="1240" cy="220" rx="420" ry="320" fill="url(#glowA)"/>
+  <ellipse cx="420" cy="740" rx="520" ry="300" fill="url(#glowB)"/>
+  <g opacity="0.35" stroke="#F8FAFC">
+    <path d="M90 120h620"/>
+    <path d="M90 200h540"/>
+    <path d="M90 280h700"/>
+    <path d="M90 360h480"/>
+    <path d="M90 440h780"/>
+    <path d="M90 520h650"/>
+    <path d="M90 600h560"/>
+    <path d="M90 680h730"/>
+    <path d="M90 760h600"/>
+  </g>
+  <g fill="#F8FAFC" fill-opacity="0.2">
+    <rect x="980" y="500" width="460" height="280" rx="22"/>
+    <rect x="1020" y="540" width="260" height="24" rx="8"/>
+    <rect x="1020" y="582" width="360" height="16" rx="8"/>
+    <rect x="1020" y="610" width="320" height="16" rx="8"/>
+    <rect x="1020" y="638" width="280" height="16" rx="8"/>
+    <rect x="1020" y="684" width="120" height="42" rx="21"/>
+  </g>
+</svg>

@@ -8,6 +8,7 @@ type AuthShellProps = {
   footerLinkLabel: string;
   footerLinkHref: string;
   children: ReactNode;
+  auxiliaryContent?: ReactNode;
 };
 
 export function AuthShell({
@@ -16,19 +17,22 @@ export function AuthShell({
   footerText,
   footerLinkLabel,
   footerLinkHref,
-  children
+  children,
+  auxiliaryContent
 }: AuthShellProps): JSX.Element {
   return (
-    <section className="mx-auto max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-      <h1 className="text-3xl font-black text-slate-950">{title}</h1>
-      <p className="mt-2 text-sm text-slate-600">{subtitle}</p>
+    <section className="w-full max-w-md rounded-3xl border border-pv-border bg-white p-6 shadow-[0_30px_70px_-40px_rgba(20,23,31,0.55)] sm:p-7">
+      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-pv-muted">PullVault account</p>
+      <h1 className="mt-3 text-3xl font-black text-pv-ink">{title}</h1>
+      <p className="mt-2 text-sm text-pv-muted">{subtitle}</p>
       <div className="mt-6">{children}</div>
-      <p className="mt-5 text-sm text-slate-600">
+      <p className="mt-5 text-sm text-pv-muted">
         {footerText}{" "}
-        <Link href={footerLinkHref} className="font-bold text-rose-700 hover:text-rose-900">
+        <Link href={footerLinkHref} className="font-semibold text-pv-accent hover:text-pv-accent-strong">
           {footerLinkLabel}
         </Link>
       </p>
+      {auxiliaryContent ? <div className="mt-5 border-t border-pv-border pt-3">{auxiliaryContent}</div> : null}
     </section>
   );
 }

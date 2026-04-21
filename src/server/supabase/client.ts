@@ -73,6 +73,24 @@ export type AuthenticatedUser = {
   rawUser: User;
 };
 
+export async function refreshSupabaseSession(refreshToken: string): Promise<SessionTokenPair> {
+  const supabase = createSupabaseAnonClient();
+  const { data, error } = await supabase.auth.refreshSession({
+    refresh_token: refreshToken
+  });
+
+  const accessToken = data.session?.access_token;
+  const nextRefreshToken = data.session?.refresh_token;
+  if (error || !accessToken || !nextRefreshToken) {
+    throw new Error("Failed to refresh auth session.");
+  }
+
+  return {
+    access_token: accessToken,
+    refresh_token: nextRefreshToken
+  };
+}
+
 export async function validateSupabaseAccessToken(accessToken: string): Promise<AuthenticatedUser> {
   const supabase = createSupabaseServiceClient();
   const { data, error } = await supabase.auth.getUser(accessToken);

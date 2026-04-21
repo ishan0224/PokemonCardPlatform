@@ -8,6 +8,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useCountdown } from "@/hooks/use-countdown";
 import { ApiClientError } from "@/lib/api-client";
 import { formatDateTime, formatDollarsInputFromCents, formatMoneyCents, parseDollarsInputToCents } from "@/lib/format";
+import { routes } from "@/lib/routes";
 
 type PendingConfirm = {
   amount: number;
@@ -72,7 +73,7 @@ export function AuctionRoomView({ auctionId }: { auctionId: string }): JSX.Eleme
     }
 
     if (!user) {
-      router.push("/login");
+      router.push(routes.auth.login);
       return;
     }
 
@@ -117,7 +118,7 @@ export function AuctionRoomView({ auctionId }: { auctionId: string }): JSX.Eleme
         </div>
         <div className="flex items-center gap-2">
           <Link
-            href="/auctions"
+            href={routes.auctions.index}
             className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-500 hover:bg-slate-50"
           >
             Back to auctions

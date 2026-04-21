@@ -1,7 +1,13 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { ApiClientError, apiClient } from "@/lib/api-client";
+import { useRouter } from "next/navigation";
+import {
+  ApiClientError,
+  apiClient,
+  AUTH_SESSION_REFRESHED_EVENT,
+  setUnauthorizedHandler
+} from "@/lib/api-client";
 import { usePortfolioRoom } from "./use-socket";
 
 type AuthState = {
@@ -24,6 +30,7 @@ type AuthState = {
 const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }): JSX.Element {
+  const router = useRouter();
   const [user, setUser] = useState<AuthState["user"]>(null);
   const [balance, setBalance] = useState<AuthState["balance"]>(null);
   const [loading, setLoading] = useState(true);
@@ -48,6 +55,29 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     setUser(null);
     setBalance(null);
   }, []);
+
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setUser(null);
+      setBalance(null);
+      setLoading(false);
+    });
+
+    return () => {
+      setUnauthorizedHandler(null);
+    };
+  }, []);
+
+  useEffect(() => {
+    const onSessionRefreshed = (): void => {
+      router.refresh();
+    };
+
+    window.addEventListener(AUTH_SESSION_REFRESHED_EVENT, onSessionRefreshed);
+    return () => {
+      window.removeEventListener(AUTH_SESSION_REFRESHED_EVENT, onSessionRefreshed);
+    };
+  }, [router]);
 
   useEffect(() => {
     const controller = new AbortController();

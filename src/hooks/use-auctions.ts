@@ -1,26 +1,36 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ApiClientError,
   apiClient,
   mapApiErrorToMessage,
   type Auction,
   type CollectionCard
 } from "@/lib/api-client";
+import { createApiKey, useApiSWR, useApiSWRInfinite } from "@/lib/swr";
 import type { AuctionDurationType } from "@/lib/types";
 import { useAuctionsRoom } from "./use-socket";
+
+type AuctionsPage = {
+  auctions: Auction[];
+  page: number;
+  limit: number;
+  total: number;
+};
 
 type UseAuctionsState = {
   auctions: Auction[];
   ownedCards: CollectionCard[];
   loading: boolean;
+  loadingMore: boolean;
   error: string | null;
   page: number;
   limit: number;
   total: number;
+  hasMore: boolean;
   createPendingCardId: string | null;
   refresh: () => Promise<void>;
+  loadMore: () => Promise<void>;
   createAuction: (input: {
     cardId: string;
     startingBid: number;
@@ -29,233 +39,84 @@ type UseAuctionsState = {
 };
 
 const AUCTIONS_POLL_INTERVAL_MS = 60_000;
-const AUCTIONS_REALTIME_REFRESH_DEBOUNCE_MS = 1_000;
 
 export function useAuctions(includeOwnedCards: boolean): UseAuctionsState {
-  const [auctions, setAuctions] = useState<Auction[]>([]);
-  const [ownedCards, setOwnedCards] = useState<CollectionCard[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(24);
-  const [total, setTotal] = useState(0);
   const [createPendingCardId, setCreatePendingCardId] = useState<string | null>(null);
-  const mountedRef = useRef(true);
-  const realtimeRefreshTimerRef = useRef<number | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-
-      if (realtimeRefreshTimerRef.current !== null) {
-        window.clearTimeout(realtimeRefreshTimerRef.current);
-        realtimeRefreshTimerRef.current = null;
-      }
-    };
-  }, []);
-
-  const applyAuctionSnapshot = useCallback((snapshot: { auctions: Auction[]; page: number; limit: number; total: number }): void => {
-    setAuctions(snapshot.auctions);
-    setPage(snapshot.page);
-    setLimit(snapshot.limit);
-    setTotal(snapshot.total);
-  }, []);
-
-  const refresh = useCallback(async (): Promise<void> => {
-    if (!mountedRef.current) {
-      return;
+  const {
+    data: ownedCardsData,
+    error: ownedCardsError,
+    mutate: mutateOwnedCards
+  } = useApiSWR(
+    includeOwnedCards ? createApiKey("auctions:owned-cards") : null,
+    () =>
+      apiClient
+        .listCollection({ state: "owned", page: 1, limit: 100, sort: "newest" })
+        .then((result) => result.cards),
+    {
+      revalidateOnFocus: true,
+      shouldRetryOnError: false
     }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const auctionPromise = apiClient.listAuctions({ page: 1, limit: 24 });
-      const collectionPromise = includeOwnedCards
-        ? apiClient.listCollection({ state: "owned", page: 1, limit: 100, sort: "newest" })
-        : Promise.resolve<{ cards: CollectionCard[] }>({ cards: [] });
-      const [auctionResult, collectionResult] = await Promise.all([auctionPromise, collectionPromise]);
-
-      if (!mountedRef.current) {
-        return;
-      }
-
-      applyAuctionSnapshot(auctionResult);
-      setOwnedCards(collectionResult.cards);
-    } catch (err) {
-      if (!mountedRef.current) {
-        return;
-      }
-
-      const message = mapApiErrorToMessage(err);
-      if (message) {
-        setError(message);
-      }
-    } finally {
-      if (mountedRef.current) {
-        setLoading(false);
-      }
-    }
-  }, [applyAuctionSnapshot, includeOwnedCards]);
-
-  const refreshAuctionsOnly = useCallback(
-    async (options: { clearError?: boolean; showLoading?: boolean } = {}): Promise<void> => {
-      if (!mountedRef.current) {
-        return;
-      }
-
-      if (options.showLoading) {
-        setLoading(true);
-      }
-
-      if (options.clearError) {
-        setError(null);
-      }
-
-      try {
-        const auctionResult = await apiClient.listAuctions({ page: 1, limit: 24 });
-        if (!mountedRef.current) {
-          return;
-        }
-        applyAuctionSnapshot(auctionResult);
-      } catch (err) {
-        if (!mountedRef.current) {
-          return;
-        }
-
-        const message = mapApiErrorToMessage(err);
-        if (message) {
-          setError(message);
-        }
-      } finally {
-        if (mountedRef.current && options.showLoading) {
-          setLoading(false);
-        }
-      }
-    },
-    [applyAuctionSnapshot]
   );
 
-  const scheduleRealtimeRefresh = useCallback(
-    (delayMs = AUCTIONS_REALTIME_REFRESH_DEBOUNCE_MS): void => {
-      if (realtimeRefreshTimerRef.current !== null) {
-        window.clearTimeout(realtimeRefreshTimerRef.current);
-      }
-
-      realtimeRefreshTimerRef.current = window.setTimeout(() => {
-        realtimeRefreshTimerRef.current = null;
-
-        if (document.visibilityState === "hidden") {
-          return;
-        }
-
-        void refreshAuctionsOnly();
-      }, delayMs);
-    },
-    [refreshAuctionsOnly]
-  );
-
-  useEffect(() => {
-    const controller = new AbortController();
-    let mounted = true;
-
-    const bootstrap = async (): Promise<void> => {
-      setLoading(true);
-      setError(null);
-
-      try {
-        const auctionPromise = apiClient.listAuctions({ page: 1, limit: 24 }, controller.signal);
-        const collectionPromise = includeOwnedCards
-          ? apiClient.listCollection(
-              { state: "owned", page: 1, limit: 100, sort: "newest" },
-              controller.signal
-            )
-          : Promise.resolve<{ cards: CollectionCard[] }>({ cards: [] });
-        const [auctionResult, collectionResult] = await Promise.all([auctionPromise, collectionPromise]);
-
-        if (!mounted) {
-          return;
-        }
-
-        applyAuctionSnapshot(auctionResult);
-        setOwnedCards(collectionResult.cards);
-      } catch (err) {
-        if (!mounted) {
-          return;
-        }
-        if (err instanceof ApiClientError && err.code === "REQUEST_ABORTED") {
-          return;
-        }
-
-        const message = mapApiErrorToMessage(err);
-        if (message) {
-          setError(message);
-        }
-      } finally {
-        if (mounted) {
-          setLoading(false);
-        }
-      }
-    };
-
-    void bootstrap();
-
-    return () => {
-      mounted = false;
-      controller.abort();
-    };
-  }, [applyAuctionSnapshot, includeOwnedCards]);
-
-  useAuctionsRoom(true, {
-    onAuctionCreated: () => {
-      scheduleRealtimeRefresh();
-    },
-    onAuctionUpdated: () => {
-      scheduleRealtimeRefresh();
-    },
-    onAuctionEnded: () => {
-      scheduleRealtimeRefresh();
-    },
-    onConnected: () => {
-      scheduleRealtimeRefresh(0);
-    }
-  });
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      if (document.visibilityState === "hidden") {
-        return;
-      }
-      void refreshAuctionsOnly();
-    }, AUCTIONS_POLL_INTERVAL_MS);
-
-    return () => {
-      clearInterval(timer);
-    };
-  }, [refreshAuctionsOnly]);
-
-  useEffect(() => {
-    const onVisibilityChange = (): void => {
-      if (document.visibilityState === "visible") {
-        scheduleRealtimeRefresh(0);
-      }
-    };
-
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [scheduleRealtimeRefresh]);
-
-  const createAuction = useCallback(
-    async (input: { cardId: string; startingBid: number; durationType: AuctionDurationType }): Promise<string | null> => {
-      if (!mountedRef.current) {
+  const {
+    data,
+    error,
+    isLoading,
+    isValidating,
+    size,
+    setSize,
+    mutate
+  } = useApiSWRInfinite(
+    (index, previousPageData: AuctionsPage | null) => {
+      if (previousPageData && previousPageData.auctions.length < previousPageData.limit) {
         return null;
       }
 
+      return createApiKey("auctions:list:infinite", {
+        page: index + 1,
+        limit: 24
+      });
+    },
+    (params) =>
+      apiClient.listAuctions({
+        page: (params as { page?: number }).page ?? 1,
+        limit: (params as { limit?: number }).limit ?? 24
+      }),
+    {
+      revalidateFirstPage: true,
+      shouldRetryOnError: false,
+      persistSize: true
+    }
+  );
+
+  const auctions = useMemo(() => (data ? data.flatMap((page) => page.auctions) : []), [data]);
+  const total = data?.[0]?.total ?? 0;
+  const hasMore = auctions.length < total;
+
+  const refresh = useCallback(async (): Promise<void> => {
+    setActionError(null);
+    if (includeOwnedCards) {
+      await Promise.all([mutate(), mutateOwnedCards()]);
+      return;
+    }
+
+    await mutate();
+  }, [includeOwnedCards, mutate, mutateOwnedCards]);
+
+  const loadMore = useCallback(async (): Promise<void> => {
+    if (!hasMore || isValidating) {
+      return;
+    }
+
+    await setSize((current) => current + 1);
+  }, [hasMore, isValidating, setSize]);
+
+  const createAuction = useCallback(
+    async (input: { cardId: string; startingBid: number; durationType: AuctionDurationType }): Promise<string | null> => {
       setCreatePendingCardId(input.cardId);
-      setError(null);
+      setActionError(null);
 
       try {
         const result = await apiClient.createAuction({
@@ -264,40 +125,62 @@ export function useAuctions(includeOwnedCards: boolean): UseAuctionsState {
           durationType: input.durationType
         });
 
-        await refresh();
+        await Promise.all([mutate(), mutateOwnedCards()]);
         return result.auction.id;
-      } catch (err) {
-        if (!mountedRef.current) {
-          return null;
-        }
-
-        const message = mapApiErrorToMessage(err);
-        if (message) {
-          setError(message);
-        }
+      } catch (caughtError) {
+        setActionError(mapApiErrorToMessage(caughtError) || "Failed to create auction.");
         return null;
       } finally {
-        if (mountedRef.current) {
-          setCreatePendingCardId(null);
-        }
+        setCreatePendingCardId(null);
       }
     },
-    [refresh]
+    [mutate, mutateOwnedCards]
   );
 
-  return useMemo(
-    () => ({
-      auctions,
-      ownedCards,
-      loading,
-      error,
-      page,
-      limit,
-      total,
-      createPendingCardId,
-      refresh,
-      createAuction
-    }),
-    [auctions, ownedCards, loading, error, page, limit, total, createPendingCardId, refresh, createAuction]
-  );
+  useAuctionsRoom(true, {
+    onAuctionCreated: () => {
+      void mutate();
+    },
+    onAuctionUpdated: () => {
+      void mutate();
+    },
+    onAuctionEnded: () => {
+      void mutate();
+    },
+    onConnected: () => {
+      void mutate();
+    }
+  });
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (document.visibilityState === "hidden") {
+        return;
+      }
+
+      void mutate();
+    }, AUCTIONS_POLL_INTERVAL_MS);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [mutate]);
+
+  const mappedError = error ?? ownedCardsError;
+
+  return {
+    auctions,
+    ownedCards: ownedCardsData ?? [],
+    loading: isLoading && !data,
+    loadingMore: Boolean(data) && isValidating,
+    error: actionError ?? (mappedError ? mapApiErrorToMessage(mappedError) || "Failed to load auctions." : null),
+    page: size,
+    limit: 24,
+    total,
+    hasMore,
+    createPendingCardId,
+    refresh,
+    loadMore,
+    createAuction
+  };
 }

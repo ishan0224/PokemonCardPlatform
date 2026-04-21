@@ -8,10 +8,11 @@ import { usePackReveal } from "@/hooks/use-pack-reveal";
 import { useAuth } from "@/hooks/use-auth";
 import { formatDateTime, formatMoneyCents, formatTierLabel } from "@/lib/format";
 import { ApiClientError, type PackCard } from "@/lib/api-client";
+import { routes } from "@/lib/routes";
 
 export function PackRevealView({ packId }: { packId: string }): JSX.Element {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [summaryOpen, setSummaryOpen] = useState(false);
   const wasAllRevealedRef = useRef(false);
   const { pack, loading, error, openPending, revealPendingSlot, slotOrder, revealedCardsBySlot, openPack, revealNext, revealSlot } =
@@ -67,16 +68,16 @@ export function PackRevealView({ packId }: { packId: string }): JSX.Element {
       await openPack();
     } catch (err) {
       if (err instanceof ApiClientError && err.status === 401) {
-        router.push("/login");
+        router.push(routes.auth.login);
       }
     }
   };
 
-  if (!user && !loading) {
+  if (!authLoading && !user && !loading) {
     return (
       <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm font-medium text-amber-800">
         Login is required to access pack reveals.{" "}
-        <Link href="/login" className="font-bold underline">
+        <Link href={routes.auth.login} className="font-bold underline">
           Sign in
         </Link>
         .
@@ -92,7 +93,7 @@ export function PackRevealView({ packId }: { packId: string }): JSX.Element {
           <p className="mt-1 text-sm text-slate-600">Reveal each slot in sequence to preserve tension.</p>
         </div>
         <Link
-          href="/drops"
+          href={routes.drops.index}
           className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-500 hover:bg-slate-50"
         >
           Back to drops

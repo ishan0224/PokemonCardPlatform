@@ -1,11 +1,19 @@
 import type { PackTier } from "../../lib/types";
 import type { QueryResult, QueryResultRow } from "pg";
-import { DROP_SCHEDULER_INTERVAL_MS } from "../config/constants";
+import {
+  DROP_INVENTORY_RECONCILE_ENABLED,
+  DROP_INVENTORY_RECONCILE_INTERVAL_MS,
+  DROP_SCHEDULER_INTERVAL_MS
+} from "../config/constants";
 import { query, withTransaction } from "../db/pool";
 import { getIO } from "../websocket/io";
 import { roomNames } from "../websocket/rooms";
 import type { JobStopper } from "./price-poller";
-import { syncDropInventoryCache } from "../services/drop.service";
+import {
+  syncDropInventoryCache,
+  syncDropInventoryCacheOnDropComplete,
+  syncDropInventoryCacheOnDropStart
+} from "../services/drop.service";
 import { createEncryptedServerSeed, ensureNonceCounterRow } from "../services/fairness.service";
 import { getLatestGenerationVersion } from "../services/pack-generation-version.service";
 import { initializeDropLotteryActivation } from "../services/drop-lottery.service";
@@ -65,6 +73,8 @@ type LockedDropRow = {
 type SchedulerQueryable = {
   query<T extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]): Promise<QueryResult<T>>;
 };
+
+let lastInventoryReconcileAtMs = 0;
 
 async function ensureDropGenerationVersion(
   client: SchedulerQueryable,
@@ -233,6 +243,23 @@ async function syncActiveDropInventoryCache(): Promise<void> {
   }
 }
 
+async function maybeRunInventoryReconcileSafetyNet(): Promise<void> {
+  if (!DROP_INVENTORY_RECONCILE_ENABLED) {
+    return;
+  }
+
+  const nowMs = Date.now();
+  if (
+    lastInventoryReconcileAtMs !== 0 &&
+    nowMs - lastInventoryReconcileAtMs < DROP_INVENTORY_RECONCILE_INTERVAL_MS
+  ) {
+    return;
+  }
+
+  await syncActiveDropInventoryCache();
+  lastInventoryReconcileAtMs = nowMs;
+}
+
 async function runSchedulerTick(): Promise<void> {
   const fallbackGenerationVersionId = await resolveLatestGenerationVersionId();
   if (!fallbackGenerationVersionId) {
@@ -241,10 +268,11 @@ async function runSchedulerTick(): Promise<void> {
         "Run `npm run partb:phase0:backfill` before activating drops."
     );
 
-    await syncActiveDropInventoryCache();
+    await maybeRunInventoryReconcileSafetyNet();
 
     const completedDropIds = await completeSoldOutDrops();
     for (const dropId of completedDropIds) {
+      await syncDropInventoryCacheOnDropComplete(dropId);
       emitDropEvent(dropId, "drop_completed", {
         dropId,
         completedAt: new Date().toISOString()
@@ -262,13 +290,13 @@ async function runSchedulerTick(): Promise<void> {
     await initializeDropLotteryActivation(row.id);
   }
 
-  await syncActiveDropInventoryCache();
+  await maybeRunInventoryReconcileSafetyNet();
 
   const activatedDropIds = await activateDueDrops(fallbackGenerationVersionId);
 
   for (const dropId of activatedDropIds) {
     await initializeDropLotteryActivation(dropId);
-    await syncDropInventoryCache(dropId);
+    await syncDropInventoryCacheOnDropStart(dropId);
 
     emitDropEvent(dropId, "drop_started", {
       dropId,
@@ -291,6 +319,7 @@ async function runSchedulerTick(): Promise<void> {
   const completedDropIds = await completeSoldOutDrops();
 
   for (const dropId of completedDropIds) {
+    await syncDropInventoryCacheOnDropComplete(dropId);
     emitDropEvent(dropId, "drop_completed", {
       dropId,
       completedAt: new Date().toISOString()
@@ -302,6 +331,7 @@ async function runSchedulerTick(): Promise<void> {
 
 export function startDropScheduler(): JobStopper {
   let running = false;
+  lastInventoryReconcileAtMs = 0;
 
   const executeTick = async (): Promise<void> => {
     if (running) {

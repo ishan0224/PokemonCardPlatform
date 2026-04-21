@@ -155,6 +155,22 @@ async function writeCachedInventory(dropId: string, tier: PackTier, remainingInv
   }
 }
 
+export async function syncDropInventoryCacheOnPurchase(input: {
+  dropId: string;
+  tier: PackTier;
+  remainingInventory: number;
+}): Promise<void> {
+  await writeCachedInventory(input.dropId, input.tier, input.remainingInventory);
+}
+
+export async function syncDropInventoryCacheOnDropStart(dropId: string): Promise<void> {
+  await syncDropInventoryCache(dropId);
+}
+
+export async function syncDropInventoryCacheOnDropComplete(dropId: string): Promise<void> {
+  await syncDropInventoryCache(dropId);
+}
+
 type TrackedQuery = <T extends QueryResultRow = QueryResultRow>(
   text: string,
   params?: unknown[]
@@ -714,7 +730,11 @@ export async function purchasePack(input: {
       };
     });
 
-    await writeCachedInventory(purchase.dropId, purchase.tier, purchase.remainingInventory);
+    await syncDropInventoryCacheOnPurchase({
+      dropId: purchase.dropId,
+      tier: purchase.tier,
+      remainingInventory: purchase.remainingInventory
+    });
 
     await maybeEmitDropEvent(purchase.dropId, "inventory_update", {
       dropId: purchase.dropId,

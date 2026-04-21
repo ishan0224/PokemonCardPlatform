@@ -72,17 +72,44 @@ async function settleNoBidAuction(
   },
   auction: ClaimedAuctionRow
 ): Promise<SettlementOutcome> {
-  const cardResult = await client.query<{ id: string }>(
-    `SELECT id
+  const cardResult = await client.query<{ id: string; owner_id: string; state: string }>(
+    `SELECT id, owner_id, state
      FROM cards
      WHERE id = $1
-       AND state = 'in_auction'
      FOR UPDATE`,
     [auction.card_id]
   );
 
   if (cardResult.rowCount !== 1) {
-    throw new AuctionCloserError(`Auction ${auction.id} card is not in in_auction state.`);
+    throw new AuctionCloserError(`Auction ${auction.id} card not found during no-bid settlement.`);
+  }
+
+  const card = cardResult.rows[0];
+  if (card.state !== "in_auction") {
+    const cancelResult = await client.query(
+      `UPDATE auctions
+       SET status = 'cancelled'
+       WHERE id = $1
+         AND status = 'active'`,
+      [auction.id]
+    );
+
+    if (cancelResult.rowCount !== 1) {
+      throw new AuctionCloserError(`Auction ${auction.id} stale-state recovery failed.`);
+    }
+
+    console.warn(
+      `[auction-closer] Recovered stale no-bid auction ${auction.id}: card state=${card.state}, owner=${card.owner_id}; marked cancelled.`
+    );
+
+    return {
+      auctionId: auction.id,
+      cardId: auction.card_id,
+      sellerId: auction.seller_id,
+      winnerId: null,
+      winningBid: null,
+      feeCharged: 0
+    };
   }
 
   await client.query(

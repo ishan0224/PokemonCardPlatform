@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { buttonClassName } from "@/components/ui/button";
 
 type StatusPanelProps = {
   title: string;
@@ -17,10 +18,7 @@ export function StatusPanel({ title, message, action }: StatusPanelProps): JSX.E
       <h1 className="text-2xl font-black text-slate-900">{title}</h1>
       {message ? <p className="mt-2 text-sm text-slate-600">{message}</p> : null}
       {action ? (
-        <Link
-          href={action.href}
-          className="mt-4 inline-flex rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-700"
-        >
+        <Link href={action.href} className={`${buttonClassName({ variant: "primary" })} mt-4`}>
           {action.label}
         </Link>
       ) : null}

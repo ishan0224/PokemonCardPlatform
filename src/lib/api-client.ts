@@ -244,6 +244,25 @@ function createAbortError(message: string): ApiClientError {
   return new ApiClientError({ code: "REQUEST_ABORTED", message }, 499);
 }
 
+export const AUTH_SESSION_REFRESHED_EVENT = "pv:auth-session-refreshed";
+
+type UnauthorizedHandler = () => void;
+
+const AUTH_REFRESH_PATH = "/api/auth/refresh";
+const AUTH_REFRESH_EXCLUDED_PATHS: readonly string[] = [
+  "/api/auth/login",
+  "/api/auth/register",
+  "/api/auth/logout",
+  AUTH_REFRESH_PATH
+];
+
+let onUnauthorized: UnauthorizedHandler | null = null;
+let inFlightRefreshPromise: Promise<boolean> | null = null;
+
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
+  onUnauthorized = handler;
+}
+
 async function parseJsonSafe(response: Response): Promise<JsonRecord> {
   const text = await response.text();
 
@@ -264,7 +283,48 @@ async function parseJsonSafe(response: Response): Promise<JsonRecord> {
   }
 }
 
-async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> {
+type RequestOptions = {
+  allowAuthRefresh: boolean;
+  alreadyRetried: boolean;
+  emitUnauthorized: boolean;
+};
+
+function isAuthRefreshExcludedPath(path: string): boolean {
+  return AUTH_REFRESH_EXCLUDED_PATHS.some((prefix) => path.startsWith(prefix));
+}
+
+async function attemptAuthSessionRefresh(): Promise<boolean> {
+  if (inFlightRefreshPromise) {
+    return inFlightRefreshPromise;
+  }
+
+  inFlightRefreshPromise = (async () => {
+    try {
+      await requestJsonInternal<{ refreshed: boolean }>(
+        AUTH_REFRESH_PATH,
+        { method: "POST" },
+        {
+          allowAuthRefresh: false,
+          alreadyRetried: true,
+          emitUnauthorized: false
+        }
+      );
+
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event(AUTH_SESSION_REFRESHED_EVENT));
+      }
+      return true;
+    } catch (_error) {
+      return false;
+    } finally {
+      inFlightRefreshPromise = null;
+    }
+  })();
+
+  return inFlightRefreshPromise;
+}
+
+async function requestJsonInternal<T>(path: string, init: RequestInit, options: RequestOptions): Promise<T> {
   try {
     const response = await fetch(path, {
       ...init,
@@ -279,15 +339,40 @@ async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> 
     const payload = await parseJsonSafe(response);
 
     if (!response.ok) {
-      const error = payload.error as ApiErrorPayload | undefined;
-      throw new ApiClientError(
+      const errorPayload = payload.error as ApiErrorPayload | undefined;
+      const apiError = new ApiClientError(
         {
-          code: error?.code ?? "HTTP_ERROR",
-          message: error?.message ?? `Request failed with ${response.status}.`,
-          details: error?.details
+          code: errorPayload?.code ?? "HTTP_ERROR",
+          message: errorPayload?.message ?? `Request failed with ${response.status}.`,
+          details: errorPayload?.details
         },
         response.status
       );
+
+      const shouldTryRefresh =
+        options.allowAuthRefresh &&
+        !options.alreadyRetried &&
+        response.status === 401 &&
+        apiError.code === "UNAUTHORIZED" &&
+        !isAuthRefreshExcludedPath(path);
+
+      if (shouldTryRefresh) {
+        const refreshed = await attemptAuthSessionRefresh();
+
+        if (refreshed) {
+          return requestJsonInternal<T>(path, init, {
+            allowAuthRefresh: false,
+            alreadyRetried: true,
+            emitUnauthorized: options.emitUnauthorized
+          });
+        }
+      }
+
+      if (options.emitUnauthorized && response.status === 401 && apiError.code === "UNAUTHORIZED") {
+        onUnauthorized?.();
+      }
+
+      throw apiError;
     }
 
     return payload as T;
@@ -297,6 +382,14 @@ async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> 
     }
     throw error;
   }
+}
+
+async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> {
+  return requestJsonInternal<T>(path, init, {
+    allowAuthRefresh: true,
+    alreadyRetried: false,
+    emitUnauthorized: true
+  });
 }
 
 export function mapApiErrorToMessage(error: unknown): string {
@@ -648,6 +741,20 @@ export const apiClient = {
   rerunFairnessAudit(signal?: AbortSignal): Promise<{ audit: FairnessAuditResult; warning: string }> {
     return requestJson("/api/admin/fairness/audit/rerun", {
       method: "POST",
+      signal
+    });
+  },
+
+  getFairnessTestVector(signal?: AbortSignal): Promise<{ vector: unknown }> {
+    return requestJson("/api/fairness/verify-test-vector", {
+      method: "GET",
+      signal
+    });
+  },
+
+  getFairnessPack(packId: string, signal?: AbortSignal): Promise<{ pack: unknown }> {
+    return requestJson(`/api/fairness/pack/${packId}`, {
+      method: "GET",
       signal
     });
   },
