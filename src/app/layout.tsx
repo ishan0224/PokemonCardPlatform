@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { ClientProviders } from "@/components/providers/client-providers";
+import { useSession } from "@/server/auth/session";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -14,14 +15,16 @@ export const metadata: Metadata = {
   description: "Buy, open, and reveal collectible card packs in real time."
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }): Promise<JSX.Element> {
+  const session = await useSession();
+
   return (
     <html lang="en" className={inter.variable}>
       <head>
         <link rel="preconnect" href="https://images.pokemontcg.io" crossOrigin="" />
       </head>
       <body className="font-sans">
-        <ClientProviders>{children}</ClientProviders>
+        <ClientProviders initialSession={session.user}>{children}</ClientProviders>
       </body>
     </html>
   );

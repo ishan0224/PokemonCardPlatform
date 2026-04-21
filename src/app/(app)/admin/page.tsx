@@ -51,6 +51,16 @@ export default function AdminLandingPage(): JSX.Element {
           description="Review open auction abuse/suspicion flags and resolve triage outcomes."
           href={routes.admin.auctionFlags}
         />
+        <AdminToolCard
+          title="Fairness"
+          description="Inspect drop-level fairness status and jump directly into pack verification."
+          href={routes.admin.fairness}
+        />
+        <AdminToolCard
+          title="Drops"
+          description="Schedule drops, configure tier inventory, and control publish lifecycle."
+          href={routes.admin.drops}
+        />
       </section>
     </div>
   );

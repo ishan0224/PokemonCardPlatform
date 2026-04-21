@@ -1,14 +1,18 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { MarketplaceListingCard } from "@/components/marketplace/marketplace-listing-card";
 import { Button } from "@/components/ui/button";
+import { buttonClassName } from "@/components/ui/button-styles";
 import { CardGrid } from "@/components/ui/card-grid";
 import { InfiniteSentinel } from "@/components/ui/infinite-sentinel";
+import { LoadingCardGrid } from "@/components/ui/loading-card-grid";
 import { useAuth } from "@/hooks/use-auth";
 import { useMarketplace } from "@/hooks/use-marketplace";
 import type { MarketplaceListingActionState } from "@/components/marketplace/marketplace-listing-card";
 import type { MarketplaceListing, MarketplaceSort } from "@/lib/api-client";
+import { routes } from "@/lib/routes";
 import type { RarityTier } from "@/lib/types";
 
 const RARITY_OPTIONS: Array<{ label: string; value: RarityTier | "" }> = [
@@ -114,12 +118,21 @@ export default function MarketplacePage(): JSX.Element {
         </div>
       </section>
 
-      {marketplace.loading ? <p className="text-sm font-medium text-slate-600">Loading marketplace...</p> : null}
+      {marketplace.loading ? (
+        <div className="space-y-3">
+          <p className="text-sm font-medium text-slate-600">Loading marketplace...</p>
+          <LoadingCardGrid cards={6} />
+        </div>
+      ) : null}
       {marketplace.error ? <p className="rounded-xl bg-rose-50 p-3 text-sm font-medium text-rose-700">{marketplace.error}</p> : null}
 
       {!marketplace.loading && !marketplace.error && marketplace.listings.length === 0 ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-600">
-          No active listings found for this filter.
+          <p className="font-semibold text-slate-900">No active listings found for this filter.</p>
+          <p className="mt-1">List cards from your collection to create the first matching offer.</p>
+          <Link href={routes.collection.index} className={`${buttonClassName({ variant: "primary", size: "sm" })} mt-3`}>
+            Open Collection
+          </Link>
         </div>
       ) : null}
 

@@ -13,7 +13,8 @@ import type {
   ListingStatus,
   PackEconomicsBundle,
   PackTier,
-  RarityTier
+  RarityTier,
+  SlotDistribution
 } from "./types";
 
 export type ApiUser = {
@@ -48,12 +49,25 @@ export type Drop = {
 export type PackSummary = {
   id: string;
   dropId: string;
+  dropName: string;
+  dropScheduledAt: string;
   dropPackId: string;
   tier: PackTier;
   pricePaid: number;
   opened: boolean;
   purchasedAt: string;
   openedAt: string | null;
+};
+
+export type ListMyPacksInput = {
+  opened?: boolean;
+  cursor?: string | null;
+  limit?: number;
+};
+
+export type ListMyPacksResponse = {
+  packs: PackSummary[];
+  nextCursor: string | null;
 };
 
 export type PackCard = {
@@ -84,6 +98,7 @@ export type MarketplaceSort = "newest" | "price_asc" | "price_desc";
 
 export type CollectionCard = {
   id: string;
+  packId: string | null;
   ownerId: string;
   slotNumber: number;
   state: CardState;
@@ -105,6 +120,127 @@ export type CollectionCard = {
     imageUrl: string | null;
     imageUrlHires: string | null;
   };
+};
+
+export type FairnessMyPack = {
+  id: string;
+  tier: PackTier;
+  dropId: string;
+  dropScheduledAt: string;
+  purchasedAt: string;
+  verificationStatus: "VERIFIABLE" | "SEED_UNREVEALED" | "SEED_DECRYPTION_FAILED" | "UNVERIFIABLE_LEGACY_PACK";
+};
+
+export type AdminDropStatus = DropStatus | "draft";
+
+export type AdminDropTierComposition = {
+  setKeys: string[];
+  includedRarities: RarityTier[];
+  explicitIncludeCardIds: string[];
+  explicitExcludeCardIds: string[];
+};
+
+export type AdminDropTierInput = {
+  tier: PackTier;
+  price: number;
+  totalInventory: number;
+  composition: AdminDropTierComposition;
+};
+
+export type AdminDropMutationInput = {
+  name: string;
+  scheduledAt: string;
+  lotteryEnabled: boolean;
+  maxPacksPerUser: number;
+  tiers: AdminDropTierInput[];
+};
+
+export type AdminDropTierPreview = {
+  tier: PackTier;
+  cardsPerPack: number;
+  slots: SlotDistribution[][];
+  eligibleCounts: Record<RarityTier, number>;
+  requiredPerRarity: number;
+  readiness: {
+    ready: boolean;
+    issues: Array<{
+      rarity: RarityTier;
+      required: number;
+      actual: number;
+    }>;
+  };
+};
+
+export type AdminDropPreview = {
+  tiers: AdminDropTierPreview[];
+  overallReady: boolean;
+};
+
+export type AdminDropTierView = {
+  tier: PackTier;
+  price: number;
+  totalInventory: number;
+  remainingInventory: number;
+  consumedInventory: number;
+  cardsPerPack: number;
+  slots: SlotDistribution[][];
+  composition: AdminDropTierComposition;
+  eligibleCounts: Record<RarityTier, number>;
+};
+
+export type AdminDropView = {
+  id: string;
+  name: string;
+  status: AdminDropStatus;
+  scheduledAt: string;
+  lotteryEnabled: boolean;
+  maxPacksPerUser: number;
+  publishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  tiers: AdminDropTierView[];
+  inventory: {
+    total: number;
+    remaining: number;
+    consumed: number;
+  };
+  lottery: {
+    wins: number;
+    losses: number;
+    unavailable: number;
+  };
+  scheduler: {
+    issueCount: number;
+    lastIssueAt: string | null;
+  };
+};
+
+export type AdminCardSetItem = {
+  setKey: string;
+  setName: string;
+  setId: string | null;
+  totalCount: number;
+  rarityCounts: {
+    common: number;
+    uncommon: number;
+    rare: number;
+    holoRare: number;
+    ultraRare: number;
+    chase: number;
+  };
+};
+
+export type AdminCardSearchItem = {
+  id: string;
+  tcgId: string;
+  name: string;
+  setName: string;
+  setId: string | null;
+  setKey: string;
+  rarityTier: RarityTier;
+  currentPrice: number;
+  imageUrl: string | null;
+  imageUrlHires: string | null;
 };
 
 export type CollectionPortfolio = {
@@ -450,6 +586,20 @@ export function mapApiErrorToMessage(error: unknown): string {
         return "You do not have permission to access this page.";
       case "INVALID_WINDOW":
         return "Time window is invalid.";
+      case "DROP_NOT_EDITABLE":
+        return "This drop can no longer be edited.";
+      case "DROP_NOT_PUBLISHABLE":
+        return "Only draft drops can be published.";
+      case "INVALID_DROP_CONFIGURATION":
+        return "Drop configuration is invalid.";
+      case "COMPOSITION_POOL_TOO_SMALL":
+        return "Pack composition is too small for activation.";
+      case "INVALID_CARD_QUERY":
+        return "Search query is invalid.";
+      case "INVALID_CURSOR":
+        return "Pagination cursor is invalid.";
+      case "INVALID_OPENED":
+        return "Opened filter is invalid.";
       case "REQUEST_ABORTED":
         return "";
       default:
@@ -496,6 +646,14 @@ export const apiClient = {
     return requestJson(`/api/drops?limit=${limit}`, { method: "GET", signal });
   },
 
+  listActiveDrops(limit = 20, signal?: AbortSignal): Promise<{ drops: Drop[] }> {
+    return requestJson(`/api/drops/active?limit=${limit}`, { method: "GET", signal });
+  },
+
+  listUpcomingDrops(limit = 20, signal?: AbortSignal): Promise<{ drops: Drop[] }> {
+    return requestJson(`/api/drops/upcoming?limit=${limit}`, { method: "GET", signal });
+  },
+
   getDrop(dropId: string, signal?: AbortSignal): Promise<{ drop: Drop }> {
     return requestJson(`/api/drops/${dropId}`, { method: "GET", signal });
   },
@@ -510,6 +668,25 @@ export const apiClient = {
 
   listPacks(limit = 50, signal?: AbortSignal): Promise<{ packs: PackSummary[] }> {
     return requestJson(`/api/packs?limit=${limit}`, { method: "GET", signal });
+  },
+
+  listMyPacks(input: ListMyPacksInput = {}, signal?: AbortSignal): Promise<ListMyPacksResponse> {
+    const params = new URLSearchParams();
+    if (typeof input.opened === "boolean") {
+      params.set("opened", String(input.opened));
+    }
+    if (typeof input.limit === "number") {
+      params.set("limit", String(input.limit));
+    }
+    if (input.cursor) {
+      params.set("cursor", input.cursor);
+    }
+    const query = params.toString();
+
+    return requestJson(`/api/packs${query ? `?${query}` : ""}`, {
+      method: "GET",
+      signal
+    });
   },
 
   getPack(packId: string, signal?: AbortSignal): Promise<{ pack: PackDetail }> {
@@ -754,6 +931,142 @@ export const apiClient = {
 
   getFairnessPack(packId: string, signal?: AbortSignal): Promise<{ pack: unknown }> {
     return requestJson(`/api/fairness/pack/${packId}`, {
+      method: "GET",
+      signal
+    });
+  },
+
+  getMyFairnessPacks(
+    input: {
+      date?: string | null;
+      dropId?: string | null;
+      cursor?: string | null;
+      limit?: number;
+    } = {},
+    signal?: AbortSignal
+  ): Promise<{ packs: FairnessMyPack[]; nextCursor: string | null }> {
+    const params = new URLSearchParams();
+    if (input.date) {
+      params.set("date", input.date);
+    }
+    if (input.dropId) {
+      params.set("dropId", input.dropId);
+    }
+    if (input.cursor) {
+      params.set("cursor", input.cursor);
+    }
+    if (typeof input.limit === "number") {
+      params.set("limit", String(input.limit));
+    }
+    const query = params.toString();
+    return requestJson(`/api/fairness/my-packs${query ? `?${query}` : ""}`, {
+      method: "GET",
+      signal
+    });
+  },
+
+  listAdminDrops(
+    input: {
+      cursor?: string | null;
+      limit?: number;
+      status?: AdminDropStatus | "all";
+    } = {},
+    signal?: AbortSignal
+  ): Promise<{ items: AdminDropView[]; nextCursor: string | null }> {
+    const params = new URLSearchParams();
+    if (input.cursor) {
+      params.set("cursor", input.cursor);
+    }
+    if (typeof input.limit === "number") {
+      params.set("limit", String(input.limit));
+    }
+    if (input.status) {
+      params.set("status", input.status);
+    }
+    const query = params.toString();
+    return requestJson(`/api/admin/drops${query ? `?${query}` : ""}`, {
+      method: "GET",
+      signal
+    });
+  },
+
+  getAdminDrop(dropId: string, signal?: AbortSignal): Promise<{ drop: AdminDropView }> {
+    return requestJson(`/api/admin/drops/${dropId}`, {
+      method: "GET",
+      signal
+    });
+  },
+
+  createAdminDrop(input: AdminDropMutationInput, signal?: AbortSignal): Promise<{ drop: AdminDropView }> {
+    return requestJson("/api/admin/drops", {
+      method: "POST",
+      body: JSON.stringify(input),
+      signal
+    });
+  },
+
+  updateAdminDrop(dropId: string, input: AdminDropMutationInput, signal?: AbortSignal): Promise<{ drop: AdminDropView }> {
+    return requestJson(`/api/admin/drops/${dropId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+      signal
+    });
+  },
+
+  publishAdminDrop(dropId: string, signal?: AbortSignal): Promise<{ drop: AdminDropView }> {
+    return requestJson(`/api/admin/drops/${dropId}/publish`, {
+      method: "POST",
+      signal
+    });
+  },
+
+  previewAdminDrop(input: AdminDropMutationInput, signal?: AbortSignal): Promise<{ preview: AdminDropPreview }> {
+    return requestJson("/api/admin/drops", {
+      method: "PUT",
+      body: JSON.stringify(input),
+      signal
+    });
+  },
+
+  listAdminCardSets(
+    input: {
+      cursor?: string | null;
+      limit?: number;
+    } = {},
+    signal?: AbortSignal
+  ): Promise<{ items: AdminCardSetItem[]; nextCursor: string | null }> {
+    const params = new URLSearchParams();
+    if (input.cursor) {
+      params.set("cursor", input.cursor);
+    }
+    if (typeof input.limit === "number") {
+      params.set("limit", String(input.limit));
+    }
+    const query = params.toString();
+    return requestJson(`/api/admin/cards/sets${query ? `?${query}` : ""}`, {
+      method: "GET",
+      signal
+    });
+  },
+
+  searchAdminCards(
+    input: {
+      query: string;
+      cursor?: string | null;
+      limit?: number;
+    },
+    signal?: AbortSignal
+  ): Promise<{ items: AdminCardSearchItem[]; nextCursor: string | null }> {
+    const params = new URLSearchParams();
+    params.set("q", input.query);
+    if (input.cursor) {
+      params.set("cursor", input.cursor);
+    }
+    if (typeof input.limit === "number") {
+      params.set("limit", String(input.limit));
+    }
+    const query = params.toString();
+    return requestJson(`/api/admin/cards${query ? `?${query}` : ""}`, {
       method: "GET",
       signal
     });

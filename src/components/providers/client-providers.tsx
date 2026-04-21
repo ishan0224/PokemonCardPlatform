@@ -2,9 +2,16 @@
 
 import type { ReactNode } from "react";
 import { SWRConfig } from "swr";
+import { NotificationsProvider } from "@/components/providers/notifications-provider";
 import { AuthProvider } from "@/hooks/use-auth";
+import type { ServerSessionUser } from "@/server/auth/session";
 
-export function ClientProviders({ children }: { children: ReactNode }): JSX.Element {
+type ClientProvidersProps = {
+  children: ReactNode;
+  initialSession?: ServerSessionUser | null;
+};
+
+export function ClientProviders({ children, initialSession = null }: ClientProvidersProps): JSX.Element {
   return (
     <SWRConfig
       value={{
@@ -14,7 +21,9 @@ export function ClientProviders({ children }: { children: ReactNode }): JSX.Elem
         keepPreviousData: true
       }}
     >
-      <AuthProvider>{children}</AuthProvider>
+      <AuthProvider initialSession={initialSession}>
+        <NotificationsProvider>{children}</NotificationsProvider>
+      </AuthProvider>
     </SWRConfig>
   );
 }

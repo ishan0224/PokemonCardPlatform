@@ -581,6 +581,7 @@ export async function listDrops(limit = 20): Promise<DropView[]> {
               dp.remaining_inventory
        FROM drops d
        LEFT JOIN drop_packs dp ON dp.drop_id = d.id
+       WHERE d.status <> 'draft'
        ORDER BY CASE d.status
                   WHEN 'active' THEN 0
                   WHEN 'upcoming' THEN 1
@@ -590,6 +591,47 @@ export async function listDrops(limit = 20): Promise<DropView[]> {
                 dp.tier ASC
        LIMIT $1`,
       [normalizedLimit * 3]
+    );
+  });
+
+  const mapped = mapDropRows(result.rows);
+  return mapped.slice(0, normalizedLimit);
+}
+
+export async function listPublicDropsByStatus(statuses: DropStatus[], limit = 20): Promise<DropView[]> {
+  const normalizedLimit = Math.min(Math.max(Math.trunc(limit), 1), 100);
+  const normalizedStatuses = [...new Set(statuses)];
+
+  if (normalizedStatuses.length === 0) {
+    return [];
+  }
+
+  const result = await withTransaction(async (client) => {
+    return client.query<DropJoinedRow>(
+      `SELECT d.id AS drop_id,
+              d.scheduled_at,
+              d.status,
+              d.created_at,
+              dp.id AS drop_pack_id,
+              dp.tier,
+              dp.price,
+              dp.total_inventory,
+              dp.remaining_inventory
+       FROM drops d
+       LEFT JOIN drop_packs dp ON dp.drop_id = d.id
+       WHERE d.status::text = ANY($1::text[])
+       ORDER BY CASE d.status
+                  WHEN 'upcoming' THEN 0
+                  WHEN 'active' THEN 1
+                  WHEN 'completed' THEN 2
+                  WHEN 'cancelled' THEN 3
+                  ELSE 4
+                END,
+                CASE WHEN d.status = 'upcoming' THEN d.scheduled_at END ASC,
+                CASE WHEN d.status <> 'upcoming' THEN d.scheduled_at END DESC,
+                dp.tier ASC
+       LIMIT $2`,
+      [normalizedStatuses, normalizedLimit * 3]
     );
   });
 
@@ -612,6 +654,7 @@ export async function getDrop(dropId: string): Promise<DropView> {
        FROM drops d
        LEFT JOIN drop_packs dp ON dp.drop_id = d.id
        WHERE d.id = $1
+         AND d.status <> 'draft'
        ORDER BY dp.tier ASC`,
       [dropId]
     );

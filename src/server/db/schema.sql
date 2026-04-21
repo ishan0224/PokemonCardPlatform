@@ -36,11 +36,30 @@ CREATE INDEX IF NOT EXISTS idx_users_role_admin
 
 CREATE TABLE IF NOT EXISTS drops (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name            VARCHAR(120) NOT NULL DEFAULT 'Untitled Drop',
     scheduled_at    TIMESTAMPTZ NOT NULL,
-    status          VARCHAR(20) NOT NULL DEFAULT 'upcoming'
-                    CHECK (status IN ('upcoming', 'active', 'completed')),
+    status          VARCHAR(20) NOT NULL DEFAULT 'draft'
+                    CHECK (status IN ('draft', 'upcoming', 'active', 'completed')),
+    lottery_enabled BOOLEAN NOT NULL DEFAULT true,
+    max_packs_per_user INT NOT NULL DEFAULT 2,
+    published_at    TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE drops
+ADD COLUMN IF NOT EXISTS name VARCHAR(120) NOT NULL DEFAULT 'Untitled Drop';
+
+ALTER TABLE drops
+ADD COLUMN IF NOT EXISTS lottery_enabled BOOLEAN NOT NULL DEFAULT true;
+
+ALTER TABLE drops
+ADD COLUMN IF NOT EXISTS max_packs_per_user INT NOT NULL DEFAULT 2;
+
+ALTER TABLE drops
+ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ;
+
+ALTER TABLE drops
+ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
 DO $$
 BEGIN
@@ -55,7 +74,7 @@ BEGIN
 
   ALTER TABLE drops
     ADD CONSTRAINT drops_status_check
-    CHECK (status IN ('upcoming', 'active', 'completed', 'cancelled'));
+    CHECK (status IN ('draft', 'upcoming', 'active', 'completed', 'cancelled'));
 END $$;
 
 CREATE INDEX IF NOT EXISTS idx_drops_status_scheduled ON drops (status, scheduled_at);
@@ -92,6 +111,23 @@ BEGIN
 END $$;
 
 CREATE INDEX IF NOT EXISTS idx_drop_packs_drop_id ON drop_packs (drop_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_drop_packs_drop_tier_unique ON drop_packs (drop_id, tier);
+
+CREATE TABLE IF NOT EXISTS drop_tier_compositions (
+    drop_id                          UUID NOT NULL REFERENCES drops(id) ON DELETE CASCADE,
+    tier                             VARCHAR(20) NOT NULL CHECK (tier IN ('standard', 'premium', 'elite')),
+    set_keys_json                    JSONB NOT NULL DEFAULT '[]'::jsonb,
+    included_rarities_json           JSONB NOT NULL DEFAULT '[]'::jsonb,
+    explicit_include_card_ids_json   JSONB NOT NULL DEFAULT '[]'::jsonb,
+    explicit_exclude_card_ids_json   JSONB NOT NULL DEFAULT '[]'::jsonb,
+    eligible_counts_json             JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at                       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at                       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (drop_id, tier)
+);
+
+CREATE INDEX IF NOT EXISTS idx_drop_tier_compositions_drop_id
+ON drop_tier_compositions (drop_id);
 
 CREATE TABLE IF NOT EXISTS packs (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -105,6 +141,7 @@ CREATE TABLE IF NOT EXISTS packs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_packs_user_id ON packs (user_id);
+CREATE INDEX IF NOT EXISTS idx_packs_user_purchased_at_desc ON packs (user_id, purchased_at DESC);
 
 CREATE TABLE IF NOT EXISTS pack_generation_versions (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),

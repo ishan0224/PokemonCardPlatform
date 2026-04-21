@@ -1,22 +1,12 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
-import {
-  ApiClientError,
-  apiClient,
-  AUTH_SESSION_REFRESHED_EVENT,
-  setUnauthorizedHandler
-} from "@/lib/api-client";
+import { ApiClientError, apiClient, setUnauthorizedHandler } from "@/lib/api-client";
+import type { ServerSessionUser } from "@/server/auth/session";
 import { usePortfolioRoom } from "./use-socket";
 
 type AuthState = {
-  user: {
-    id: string;
-    username: string;
-    email: string;
-    role: "user" | "admin";
-  } | null;
+  user: ServerSessionUser | null;
   balance: {
     total: number;
     held: number;
@@ -29,11 +19,15 @@ type AuthState = {
 
 const AuthContext = createContext<AuthState | null>(null);
 
-export function AuthProvider({ children }: { children: ReactNode }): JSX.Element {
-  const router = useRouter();
-  const [user, setUser] = useState<AuthState["user"]>(null);
+type AuthProviderProps = {
+  children: ReactNode;
+  initialSession?: ServerSessionUser | null;
+};
+
+export function AuthProvider({ children, initialSession = null }: AuthProviderProps): JSX.Element {
+  const [user, setUser] = useState<AuthState["user"]>(initialSession);
   const [balance, setBalance] = useState<AuthState["balance"]>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(initialSession ? false : true);
 
   const refreshAuth = useCallback(async (): Promise<void> => {
     try {
@@ -67,17 +61,6 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
       setUnauthorizedHandler(null);
     };
   }, []);
-
-  useEffect(() => {
-    const onSessionRefreshed = (): void => {
-      router.refresh();
-    };
-
-    window.addEventListener(AUTH_SESSION_REFRESHED_EVENT, onSessionRefreshed);
-    return () => {
-      window.removeEventListener(AUTH_SESSION_REFRESHED_EVENT, onSessionRefreshed);
-    };
-  }, [router]);
 
   useEffect(() => {
     const controller = new AbortController();

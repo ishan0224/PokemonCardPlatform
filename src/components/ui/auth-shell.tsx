@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { LegalLinks } from "@/components/ui/legal-links";
 
 type AuthShellProps = {
   title: string;
@@ -32,6 +33,7 @@ export function AuthShell({
           {footerLinkLabel}
         </Link>
       </p>
+      <LegalLinks compact className="mt-4 border-t border-pv-border pt-3" />
       {auxiliaryContent ? <div className="mt-5 border-t border-pv-border pt-3">{auxiliaryContent}</div> : null}
     </section>
   );

@@ -1,31 +1,23 @@
+"use client";
+
 import Link from "next/link";
-import { headers } from "next/headers";
+import { usePathname } from "next/navigation";
 import { getNavSections } from "@/components/ui/nav-items";
 import { routes } from "@/lib/routes";
-import { useSession } from "@/server/auth/session";
 import { isActiveNavPath, toPathname } from "@/components/ui/nav-active";
 import { SidebarNavActiveSync } from "@/components/ui/sidebar-nav-active-sync";
 import { SidebarAccountMenu } from "@/components/ui/sidebar-account-menu";
+import { useAuth } from "@/hooks/use-auth";
 
 type SidebarNavProps = {
   mobile?: boolean;
 };
 
-function readCurrentPathname(): string {
-  const incomingHeaders = headers();
-
-  const candidate =
-    incomingHeaders.get("x-pathname") ??
-    incomingHeaders.get("next-url") ??
-    incomingHeaders.get("x-url");
-
-  return toPathname(candidate);
-}
-
-export async function SidebarNav({ mobile = false }: SidebarNavProps): Promise<JSX.Element> {
-  const session = await useSession();
-  const sections = getNavSections(session.user?.role ?? null);
-  const currentPath = readCurrentPathname();
+export function SidebarNav({ mobile = false }: SidebarNavProps): JSX.Element {
+  const pathname = usePathname();
+  const currentPath = toPathname(pathname ?? "/");
+  const { user } = useAuth();
+  const sections = getNavSections(user?.role ?? null);
 
   return (
     <aside className="flex h-full flex-col" aria-label={mobile ? "Mobile navigation" : "Sidebar navigation"}>

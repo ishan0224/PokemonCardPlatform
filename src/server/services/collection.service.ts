@@ -12,6 +12,7 @@ export type CollectionSort = "newest" | "value_desc" | "value_asc" | "pnl_desc" 
 
 export type CollectionCardView = {
   id: string;
+  packId: string | null;
   ownerId: string;
   slotNumber: number;
   state: CardState;
@@ -66,6 +67,7 @@ const RARITY_ORDER: readonly RarityTier[] = [...RARITY_TIERS];
 
 type CollectionRow = {
   card_id: string;
+  pack_id: string | null;
   owner_id: string;
   slot_number: number;
   state: CardState;
@@ -196,6 +198,7 @@ function mapCollectionRow(row: CollectionRow, currentPrice: number): CollectionC
 
   return {
     id: row.card_id,
+    packId: row.pack_id,
     ownerId: row.owner_id,
     slotNumber: row.slot_number,
     state: row.state,
@@ -252,6 +255,7 @@ export async function listCollectionCards(input: {
 
   const result = await query<CollectionRow>(
     `SELECT c.id AS card_id,
+            c.pack_id,
             c.owner_id,
             c.slot_number,
             c.state,

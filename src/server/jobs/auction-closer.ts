@@ -34,6 +34,47 @@ type SettlementOutcome = {
 
 class AuctionCloserError extends Error {}
 
+type AuctionCloserClient = {
+  query: <T>(text: string, params?: unknown[]) => Promise<{ rowCount: number | null; rows: T[] }>;
+};
+
+type BalanceHoldRow = {
+  id: string;
+  user_id: string;
+  amount: string;
+};
+
+const warnedWinningRecoveryAuctionIds = new Set<string>();
+
+function warnWinningSettlementRecoveryOnce(input: {
+  auctionId: string;
+  cardId: string;
+  sellerId: string;
+  buyerId: string;
+  winningBid: number;
+  reason: "hold_missing" | "hold_mismatched" | "hold_below_bid";
+  holdRowCount: number;
+  holdUserId: string | null;
+}): void {
+  if (warnedWinningRecoveryAuctionIds.has(input.auctionId)) {
+    return;
+  }
+
+  warnedWinningRecoveryAuctionIds.add(input.auctionId);
+  console.warn(
+    `[auction-closer] Recovered winning settlement inconsistency: ${JSON.stringify({
+      auctionId: input.auctionId,
+      cardId: input.cardId,
+      sellerId: input.sellerId,
+      buyerId: input.buyerId,
+      winningBid: input.winningBid,
+      reason: input.reason,
+      holdRowCount: input.holdRowCount,
+      holdUserId: input.holdUserId
+    })}`
+  );
+}
+
 async function emitAuctionEnded(outcome: SettlementOutcome): Promise<void> {
   await emitAuctionRealtimeEvent(outcome.auctionId, "auction_ended", {
     auctionId: outcome.auctionId,
@@ -46,9 +87,7 @@ async function emitAuctionEnded(outcome: SettlementOutcome): Promise<void> {
   });
 }
 
-async function claimNextAuction(client: {
-  query: <T>(text: string, params?: unknown[]) => Promise<{ rowCount: number | null; rows: T[] }>;
-}): Promise<ClaimedAuctionRow | null> {
+async function claimNextAuction(client: AuctionCloserClient): Promise<ClaimedAuctionRow | null> {
   const result = await client.query<ClaimedAuctionRow>(
     `SELECT id, card_id, seller_id, current_bid, current_bidder_id
      FROM auctions
@@ -67,9 +106,7 @@ async function claimNextAuction(client: {
 }
 
 async function settleNoBidAuction(
-  client: {
-    query: <T>(text: string, params?: unknown[]) => Promise<{ rowCount: number | null; rows: T[] }>;
-  },
+  client: AuctionCloserClient,
   auction: ClaimedAuctionRow
 ): Promise<SettlementOutcome> {
   const cardResult = await client.query<{ id: string; owner_id: string; state: string }>(
@@ -137,10 +174,64 @@ async function settleNoBidAuction(
   };
 }
 
+async function recoverWinningSettlementInconsistency(
+  client: AuctionCloserClient,
+  input: {
+    auction: ClaimedAuctionRow;
+    buyerId: string;
+    winningBid: number;
+    reason: "hold_missing" | "hold_mismatched" | "hold_below_bid";
+    holdRows: BalanceHoldRow[];
+  }
+): Promise<SettlementOutcome> {
+  await client.query(
+    `UPDATE auctions
+     SET status = 'cancelled'
+     WHERE id = $1
+       AND status = 'active'`,
+    [input.auction.id]
+  );
+
+  await client.query(
+    `UPDATE cards
+     SET owner_id = $1,
+         state = 'owned'
+     WHERE id = $2
+       AND state = 'in_auction'`,
+    [input.auction.seller_id, input.auction.card_id]
+  );
+
+  await client.query(
+    `UPDATE balance_holds
+     SET status = 'released'
+     WHERE auction_id = $1
+       AND status = 'active'`,
+    [input.auction.id]
+  );
+
+  warnWinningSettlementRecoveryOnce({
+    auctionId: input.auction.id,
+    cardId: input.auction.card_id,
+    sellerId: input.auction.seller_id,
+    buyerId: input.buyerId,
+    winningBid: input.winningBid,
+    reason: input.reason,
+    holdRowCount: input.holdRows.length,
+    holdUserId: input.holdRows[0]?.user_id ?? null
+  });
+
+  return {
+    auctionId: input.auction.id,
+    cardId: input.auction.card_id,
+    sellerId: input.auction.seller_id,
+    winnerId: null,
+    winningBid: null,
+    feeCharged: 0
+  };
+}
+
 async function settleWinningAuction(
-  client: {
-    query: <T>(text: string, params?: unknown[]) => Promise<{ rowCount: number | null; rows: T[] }>;
-  },
+  client: AuctionCloserClient,
   auction: ClaimedAuctionRow
 ): Promise<SettlementOutcome> {
   if (!auction.current_bid || !auction.current_bidder_id) {
@@ -182,7 +273,7 @@ async function settleWinningAuction(
     throw new AuctionCloserError(`Auction ${auction.id} card ownership/state invalid at settlement.`);
   }
 
-  const holdResult = await client.query<{ id: string; user_id: string; amount: string }>(
+  const holdResult = await client.query<BalanceHoldRow>(
     `SELECT id, user_id, amount
      FROM balance_holds
      WHERE auction_id = $1
@@ -191,13 +282,35 @@ async function settleWinningAuction(
     [auction.id]
   );
 
-  if (holdResult.rowCount !== 1 || holdResult.rows[0].user_id !== buyerId) {
-    throw new AuctionCloserError(`Auction ${auction.id} active hold missing or mismatched.`);
+  if (holdResult.rowCount !== 1) {
+    return recoverWinningSettlementInconsistency(client, {
+      auction,
+      buyerId,
+      winningBid,
+      reason: "hold_missing",
+      holdRows: holdResult.rows
+    });
+  }
+
+  if (holdResult.rows[0].user_id !== buyerId) {
+    return recoverWinningSettlementInconsistency(client, {
+      auction,
+      buyerId,
+      winningBid,
+      reason: "hold_mismatched",
+      holdRows: holdResult.rows
+    });
   }
 
   const holdAmount = Number(holdResult.rows[0].amount);
   if (holdAmount < winningBid) {
-    throw new AuctionCloserError(`Auction ${auction.id} hold amount is below winning bid.`);
+    return recoverWinningSettlementInconsistency(client, {
+      auction,
+      buyerId,
+      winningBid,
+      reason: "hold_below_bid",
+      holdRows: holdResult.rows
+    });
   }
 
   const buyerNewBalance = buyerBalance - winningBid;
@@ -270,9 +383,7 @@ async function settleWinningAuction(
 }
 
 async function settleClaimedAuction(
-  client: {
-    query: <T>(text: string, params?: unknown[]) => Promise<{ rowCount: number | null; rows: T[] }>;
-  },
+  client: AuctionCloserClient,
   auction: ClaimedAuctionRow
 ): Promise<SettlementOutcome> {
   if (!auction.current_bid || !auction.current_bidder_id) {
@@ -293,10 +404,14 @@ async function resolveNextAuction(): Promise<SettlementOutcome | null> {
   });
 }
 
-async function runCloserTick(): Promise<void> {
+async function runCloserTick(shouldStop?: () => boolean): Promise<void> {
   let processed = 0;
 
   while (true) {
+    if (shouldStop?.()) {
+      break;
+    }
+
     const outcome = await resolveNextAuction();
     if (!outcome) {
       break;
@@ -326,16 +441,17 @@ async function runCloserTick(): Promise<void> {
 
 export function startAuctionCloser(): JobStopper {
   let running = false;
+  let stopping = false;
 
   const executeTick = async (): Promise<void> => {
-    if (running) {
+    if (running || stopping) {
       return;
     }
 
     running = true;
 
     try {
-      await runCloserTick();
+      await runCloserTick(() => stopping);
     } catch (error) {
       console.error("[auction-closer] Tick failed:", error);
     } finally {
@@ -350,6 +466,7 @@ export function startAuctionCloser(): JobStopper {
   }, AUCTION_CLOSER_INTERVAL_MS);
 
   return async () => {
+    stopping = true;
     clearInterval(timer);
     await waitForTickDrain(() => running);
   };

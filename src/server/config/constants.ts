@@ -173,7 +173,8 @@ export const RATE_LIMITS = {
   packPurchasePerIp: { limit: 5, windowSeconds: 10 },
   placeBid: { limit: 10, windowSeconds: 10 },
   placeBidPerAuctionPerUser: { limit: 3, windowSeconds: 10 },
-  buyListing: { limit: 5, windowSeconds: 10 }
+  buyListing: { limit: 5, windowSeconds: 10 },
+  fairnessMyPacks: { limit: 12, windowSeconds: 10 }
 } as const;
 
 // Phase 5 B3 fat-finger cap absolute floor ($10 in cents) — per source plan §5.

@@ -4,6 +4,8 @@ import { useCallback, useMemo } from "react";
 import { apiClient, mapApiErrorToMessage, type Drop } from "@/lib/api-client";
 import { createApiKey, useApiSWRInfinite } from "@/lib/swr";
 
+export type PublicDropStatus = "upcoming" | "active";
+
 type DropsPage = {
   drops: Drop[];
   page: number;
@@ -21,14 +23,52 @@ type UseDropsState = {
   loadMore: () => Promise<void>;
 };
 
-export function useDrops(limit = 12): UseDropsState {
-  const { data, error, isLoading, isValidating, size, setSize, mutate } = useApiSWRInfinite(
+type DropsStatusClient = {
+  listActiveDrops?: (limit?: number) => Promise<{ drops: Drop[] }>;
+  listUpcomingDrops?: (limit?: number) => Promise<{ drops: Drop[] }>;
+};
+
+function sortByStatusViewOrder(status: PublicDropStatus, drops: Drop[]): Drop[] {
+  if (status === "upcoming") {
+    return [...drops].sort(
+      (a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()
+    );
+  }
+
+  return [...drops].sort(
+    (a, b) => new Date(b.scheduledAt).getTime() - new Date(a.scheduledAt).getTime()
+  );
+}
+
+function listDropsByStatus(status: PublicDropStatus, limit: number): Promise<{ drops: Drop[] }> {
+  const statusClient = apiClient as DropsStatusClient;
+
+  if (status === "active" && typeof statusClient.listActiveDrops === "function") {
+    return statusClient.listActiveDrops(limit);
+  }
+
+  if (status === "upcoming" && typeof statusClient.listUpcomingDrops === "function") {
+    return statusClient.listUpcomingDrops(limit);
+  }
+
+  // Fallback for stale client chunks/HMR mismatch: derive status-scoped list from the legacy mixed endpoint.
+  return apiClient.listDrops(limit).then((result) => ({
+    drops: sortByStatusViewOrder(
+      status,
+      result.drops.filter((drop) => drop.status === status)
+    )
+  }));
+}
+
+export function useDropsByStatus(status: PublicDropStatus, limit = 12): UseDropsState {
+  const { data, error, isLoading, isValidating, setSize, mutate } = useApiSWRInfinite(
     (index, previousPageData: DropsPage | null) => {
       if (previousPageData && !previousPageData.hasMore) {
         return null;
       }
 
-      return createApiKey("drops:list:infinite", {
+      return createApiKey("drops:list:status:infinite", {
+        status,
         page: index + 1,
         limit
       });
@@ -36,8 +76,9 @@ export function useDrops(limit = 12): UseDropsState {
     async (params) => {
       const page = (params as { page?: number }).page ?? 1;
       const pageLimit = (params as { limit?: number }).limit ?? limit;
+      const scopedStatus = (params as { status?: PublicDropStatus }).status ?? status;
       const expandedLimit = page * pageLimit;
-      const result = await apiClient.listDrops(expandedLimit);
+      const result = await listDropsByStatus(scopedStatus, expandedLimit);
       const start = (page - 1) * pageLimit;
       const end = start + pageLimit;
       const pageDrops = result.drops.slice(start, end);
@@ -81,4 +122,8 @@ export function useDrops(limit = 12): UseDropsState {
     refresh,
     loadMore
   };
+}
+
+export function useDrops(limit = 12): UseDropsState {
+  return useDropsByStatus("active", limit);
 }

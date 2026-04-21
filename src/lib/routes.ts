@@ -28,13 +28,22 @@ export const routes = {
     reveal: (packId: string) => `/packs/${encodeSegment(packId)}/reveal`
   },
   fairness: {
-    verifyIndex: "/fairness/verify",
+    verifyIndex: "/verify",
     verify: (packId: string) => `/fairness/verify/${encodeSegment(packId)}`
+  },
+  legal: {
+    terms: "/terms",
+    privacy: "/privacy",
+    about: "/about",
+    fairnessExplainer: "/fairness"
   },
   admin: {
     index: "/admin",
     economics: "/admin/economics",
     auctionFlags: "/admin/auction-flags",
-    drops: "/admin/drops"
+    fairness: "/admin/fairness",
+    drops: "/admin/drops",
+    dropsNew: "/admin/drops/new",
+    dropsEdit: (dropId: string) => `/admin/drops/${encodeSegment(dropId)}/edit`
   }
 } as const;

@@ -1,6 +1,6 @@
 "use client";
 
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import {
   buttonClassName,
   type ButtonSize,
@@ -21,21 +21,25 @@ function LoadingSpinner(): JSX.Element {
   return <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden="true" />;
 }
 
-export function Button({
-  type = "button",
-  variant = "primary",
-  size = "md",
-  loading = false,
-  disabled,
-  fullWidth = false,
-  leftIcon,
-  rightIcon,
-  className,
-  children,
-  ...props
-}: ButtonProps): JSX.Element {
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  {
+    type = "button",
+    variant = "primary",
+    size = "md",
+    loading = false,
+    disabled,
+    fullWidth = false,
+    leftIcon,
+    rightIcon,
+    className,
+    children,
+    ...props
+  },
+  ref
+): JSX.Element {
   return (
     <button
+      ref={ref}
       type={type}
       disabled={disabled || loading}
       className={buttonClassName({
@@ -51,4 +55,4 @@ export function Button({
       {!loading ? rightIcon : null}
     </button>
   );
-}
+});

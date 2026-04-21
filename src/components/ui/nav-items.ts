@@ -21,14 +21,16 @@ const PRIMARY_NAV_ITEMS: NavItem[] = [
   { id: "marketplace", label: "Marketplace", href: routes.marketplace.index },
   { id: "auctions", label: "Auctions", href: routes.auctions.index },
   { id: "collection", label: "Collection", href: routes.collection.index },
-  { id: "verify", label: "Verify", href: routes.fairness.verifyIndex, stub: true }
+  { id: "packs", label: "My Packs", href: routes.packs.index },
+  { id: "verify", label: "Verify", href: routes.fairness.verifyIndex }
 ];
 
 const ADMIN_NAV_ITEMS: NavItem[] = [
   { id: "admin-home", label: "Admin Home", href: routes.admin.index },
   { id: "admin-economics", label: "Economics", href: routes.admin.economics },
   { id: "admin-auction-flags", label: "Auction Flags", href: routes.admin.auctionFlags },
-  { id: "admin-drops", label: "Drops", href: routes.admin.drops, stub: true }
+  { id: "admin-fairness", label: "Fairness", href: routes.admin.fairness },
+  { id: "admin-drops", label: "Drops", href: routes.admin.drops }
 ];
 
 export function getNavSections(role: NavRole): NavSection[] {

@@ -4,12 +4,31 @@ import type { CardState, PackTier, RarityTier } from "../../lib/types";
 export type UserPackSummary = {
   id: string;
   dropId: string;
+  dropName: string;
+  dropScheduledAt: string;
   dropPackId: string;
   tier: PackTier;
   pricePaid: number;
   opened: boolean;
   purchasedAt: string;
   openedAt: string | null;
+};
+
+export type UserPacksCursor = {
+  purchasedAt: string;
+  id: string;
+};
+
+export type ListUserPacksInput = {
+  userId: string;
+  limit?: number;
+  cursor?: string | null;
+  opened?: boolean;
+};
+
+export type ListUserPacksResult = {
+  packs: UserPackSummary[];
+  nextCursor: string | null;
 };
 
 export type OpenedPackSlot = {
@@ -84,13 +103,109 @@ export class PackServiceError extends Error {
   }
 }
 
-export async function listUserPacks(userId: string, limit = 50): Promise<UserPackSummary[]> {
-  const normalizedLimit = Math.min(Math.max(Math.trunc(limit), 1), 200);
+const USER_PACKS_DEFAULT_LIMIT = 50;
+const USER_PACKS_MAX_LIMIT = 200;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const DEFAULT_DROP_NAME = "Untitled Drop";
+
+function normalizeUserPacksLimit(limit?: number): number {
+  if (!Number.isFinite(limit)) {
+    return USER_PACKS_DEFAULT_LIMIT;
+  }
+
+  return Math.min(USER_PACKS_MAX_LIMIT, Math.max(1, Math.trunc(limit as number)));
+}
+
+function mapUserPackSummary(row: {
+  id: string;
+  drop_id: string;
+  drop_name: string | null;
+  drop_scheduled_at: string;
+  drop_pack_id: string;
+  tier: PackTier;
+  price_paid: string;
+  opened: boolean;
+  purchased_at: string;
+  opened_at: string | null;
+}): UserPackSummary {
+  return {
+    id: row.id,
+    dropId: row.drop_id,
+    dropName: row.drop_name ?? DEFAULT_DROP_NAME,
+    dropScheduledAt: row.drop_scheduled_at,
+    dropPackId: row.drop_pack_id,
+    tier: row.tier,
+    pricePaid: Number(row.price_paid),
+    opened: row.opened,
+    purchasedAt: row.purchased_at,
+    openedAt: row.opened_at
+  };
+}
+
+export function encodeUserPacksCursor(cursor: UserPacksCursor): string {
+  return Buffer.from(
+    JSON.stringify({
+      purchasedAt: cursor.purchasedAt,
+      id: cursor.id
+    }),
+    "utf8"
+  ).toString("base64url");
+}
+
+export function decodeUserPacksCursor(cursor: string | null | undefined): UserPacksCursor | null {
+  if (!cursor || cursor.trim().length === 0) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as {
+      purchasedAt?: unknown;
+      id?: unknown;
+    };
+
+    if (typeof parsed.purchasedAt !== "string" || Number.isNaN(Date.parse(parsed.purchasedAt))) {
+      return null;
+    }
+
+    if (typeof parsed.id !== "string" || !UUID_REGEX.test(parsed.id)) {
+      return null;
+    }
+
+    return {
+      purchasedAt: parsed.purchasedAt,
+      id: parsed.id
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
+export async function listUserPacks(input: ListUserPacksInput): Promise<ListUserPacksResult> {
+  const normalizedLimit = normalizeUserPacksLimit(input.limit);
+  const cursor = decodeUserPacksCursor(input.cursor);
 
   const result = await withTransaction(async (client) => {
+    const params: unknown[] = [input.userId];
+    const filters: string[] = ["p.user_id = $1"];
+
+    if (typeof input.opened === "boolean") {
+      params.push(input.opened);
+      filters.push(`p.opened = $${params.length}`);
+    }
+
+    if (cursor) {
+      params.push(cursor.purchasedAt);
+      params.push(cursor.id);
+      filters.push(`(p.purchased_at, p.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`);
+    }
+
+    params.push(normalizedLimit + 1);
+
     return client.query<{
       id: string;
       drop_id: string;
+      drop_name: string | null;
+      drop_scheduled_at: string;
       drop_pack_id: string;
       tier: PackTier;
       price_paid: string;
@@ -100,6 +215,8 @@ export async function listUserPacks(userId: string, limit = 50): Promise<UserPac
     }>(
       `SELECT p.id,
               dp.drop_id,
+              d.name AS drop_name,
+              d.scheduled_at AS drop_scheduled_at,
               p.drop_pack_id,
               p.tier,
               p.price_paid,
@@ -108,23 +225,27 @@ export async function listUserPacks(userId: string, limit = 50): Promise<UserPac
               p.opened_at
        FROM packs p
        JOIN drop_packs dp ON dp.id = p.drop_pack_id
-       WHERE p.user_id = $1
-       ORDER BY p.purchased_at DESC
-       LIMIT $2`,
-      [userId, normalizedLimit]
+       JOIN drops d ON d.id = dp.drop_id
+       WHERE ${filters.join(" AND ")}
+       ORDER BY p.purchased_at DESC, p.id DESC
+       LIMIT $${params.length}`,
+      params
     );
   });
 
-  return result.rows.map((row) => ({
-    id: row.id,
-    dropId: row.drop_id,
-    dropPackId: row.drop_pack_id,
-    tier: row.tier,
-    pricePaid: Number(row.price_paid),
-    opened: row.opened,
-    purchasedAt: row.purchased_at,
-    openedAt: row.opened_at
-  }));
+  const hasMore = result.rows.length > normalizedLimit;
+  const pageRows = hasMore ? result.rows.slice(0, normalizedLimit) : result.rows;
+  const nextCursor = hasMore
+    ? encodeUserPacksCursor({
+        purchasedAt: pageRows[pageRows.length - 1].purchased_at,
+        id: pageRows[pageRows.length - 1].id
+      })
+    : null;
+
+  return {
+    packs: pageRows.map(mapUserPackSummary),
+    nextCursor
+  };
 }
 
 export async function getUserPackDetail(userId: string, packId: string): Promise<UserPackDetail> {
@@ -132,6 +253,8 @@ export async function getUserPackDetail(userId: string, packId: string): Promise
     const packResult = await client.query<{
       id: string;
       drop_id: string;
+      drop_name: string | null;
+      drop_scheduled_at: string;
       drop_pack_id: string;
       tier: PackTier;
       price_paid: string;
@@ -141,6 +264,8 @@ export async function getUserPackDetail(userId: string, packId: string): Promise
     }>(
       `SELECT p.id,
               dp.drop_id,
+              d.name AS drop_name,
+              d.scheduled_at AS drop_scheduled_at,
               p.drop_pack_id,
               p.tier,
               p.price_paid,
@@ -149,6 +274,7 @@ export async function getUserPackDetail(userId: string, packId: string): Promise
               p.opened_at
        FROM packs p
        JOIN drop_packs dp ON dp.id = p.drop_pack_id
+       JOIN drops d ON d.id = dp.drop_id
        WHERE p.id = $1
          AND p.user_id = $2`,
       [packId, userId]
@@ -164,6 +290,8 @@ export async function getUserPackDetail(userId: string, packId: string): Promise
       return {
         id: pack.id,
         dropId: pack.drop_id,
+        dropName: pack.drop_name ?? DEFAULT_DROP_NAME,
+        dropScheduledAt: pack.drop_scheduled_at,
         dropPackId: pack.drop_pack_id,
         tier: pack.tier,
         pricePaid: Number(pack.price_paid),
@@ -215,6 +343,8 @@ export async function getUserPackDetail(userId: string, packId: string): Promise
     return {
       id: pack.id,
       dropId: pack.drop_id,
+      dropName: pack.drop_name ?? DEFAULT_DROP_NAME,
+      dropScheduledAt: pack.drop_scheduled_at,
       dropPackId: pack.drop_pack_id,
       tier: pack.tier,
       pricePaid: Number(pack.price_paid),

@@ -6,8 +6,10 @@ import { CollectionCard } from "@/components/collection/collection-card";
 import { CollectionSummary } from "@/components/collection/collection-summary";
 import { Button, buttonClassName } from "@/components/ui/button";
 import { CardGrid } from "@/components/ui/card-grid";
+import { LoadingCardGrid } from "@/components/ui/loading-card-grid";
 import { PaginationFooter } from "@/components/ui/pagination-footer";
 import { useCollection } from "@/hooks/use-collection";
+import { useCreateAuction } from "@/hooks/use-create-auction";
 import { useAuth } from "@/hooks/use-auth";
 import { routes } from "@/lib/routes";
 import type { CardState, RarityTier } from "@/lib/types";
@@ -43,6 +45,7 @@ export default function CollectionPage(): JSX.Element {
   const [rarity, setRarity] = useState<RarityTier | "">("");
   const [state, setState] = useState<CardState | "">("");
   const [sort, setSort] = useState<CollectionSort>("newest");
+  const createAuction = useCreateAuction();
 
   const collection = useCollection({
     rarity: rarity || null,
@@ -143,12 +146,21 @@ export default function CollectionPage(): JSX.Element {
         </div>
       </section>
 
-      {collection.loading ? <p className="text-sm font-medium text-slate-600">Loading collection...</p> : null}
+      {collection.loading ? (
+        <div className="space-y-3">
+          <p className="text-sm font-medium text-slate-600">Loading collection...</p>
+          <LoadingCardGrid cards={6} />
+        </div>
+      ) : null}
       {collection.error ? <p className="rounded-xl bg-rose-50 p-3 text-sm font-medium text-rose-700">{collection.error}</p> : null}
 
       {!collection.loading && !collection.error && collection.cards.length === 0 ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-600">
-          No cards found for this filter.
+          <p className="font-semibold text-slate-900">No cards found for this filter.</p>
+          <p className="mt-1">Open packs from drops to add cards to your inventory.</p>
+          <Link href={routes.drops.index} className={`${buttonClassName({ variant: "secondary", size: "sm" })} mt-3`}>
+            Browse Drops
+          </Link>
         </div>
       ) : null}
 
@@ -161,8 +173,10 @@ export default function CollectionPage(): JSX.Element {
             card={card}
             listingPending={collection.listingPendingCardId === card.id}
             cancelPending={collection.cancelPendingListingId === card.activeListing?.id}
+            auctionPending={createAuction.pendingCardId === card.id}
             onCreateListing={collection.createListing}
             onCancelListing={collection.cancelListing}
+            onStartAuction={createAuction.createAuction}
           />
         )}
       />

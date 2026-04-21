@@ -1,14 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  apiClient,
-  mapApiErrorToMessage,
-  type Auction,
-  type CollectionCard
-} from "@/lib/api-client";
-import { createApiKey, useApiSWR, useApiSWRInfinite } from "@/lib/swr";
-import type { AuctionDurationType } from "@/lib/types";
+import { useCallback, useEffect, useMemo } from "react";
+import { apiClient, mapApiErrorToMessage, type Auction } from "@/lib/api-client";
+import { createApiKey, useApiSWRInfinite } from "@/lib/swr";
 import { useAuctionsRoom } from "./use-socket";
 
 type AuctionsPage = {
@@ -18,9 +12,14 @@ type AuctionsPage = {
   total: number;
 };
 
+export type AuctionBrowseSort = "ending_soonest" | "newest" | "highest_bid";
+
+type UseAuctionsInput = {
+  sort?: AuctionBrowseSort;
+};
+
 type UseAuctionsState = {
   auctions: Auction[];
-  ownedCards: CollectionCard[];
   loading: boolean;
   loadingMore: boolean;
   error: string | null;
@@ -28,47 +27,52 @@ type UseAuctionsState = {
   limit: number;
   total: number;
   hasMore: boolean;
-  createPendingCardId: string | null;
   refresh: () => Promise<void>;
   loadMore: () => Promise<void>;
-  createAuction: (input: {
-    cardId: string;
-    startingBid: number;
-    durationType: AuctionDurationType;
-  }) => Promise<string | null>;
 };
 
 const AUCTIONS_POLL_INTERVAL_MS = 60_000;
 
-export function useAuctions(includeOwnedCards: boolean): UseAuctionsState {
-  const [createPendingCardId, setCreatePendingCardId] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+function getAuctionReferenceBid(auction: Auction): number {
+  return auction.currentBid ?? auction.startingBid;
+}
 
-  const {
-    data: ownedCardsData,
-    error: ownedCardsError,
-    mutate: mutateOwnedCards
-  } = useApiSWR(
-    includeOwnedCards ? createApiKey("auctions:owned-cards") : null,
-    () =>
-      apiClient
-        .listCollection({ state: "owned", page: 1, limit: 100, sort: "newest" })
-        .then((result) => result.cards),
-    {
-      revalidateOnFocus: true,
-      shouldRetryOnError: false
+function sortAuctions(auctions: Auction[], sort: AuctionBrowseSort): Auction[] {
+  const sorted = [...auctions];
+
+  if (sort === "newest") {
+    sorted.sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+    return sorted;
+  }
+
+  if (sort === "highest_bid") {
+    sorted.sort((left, right) => {
+      const bidDelta = getAuctionReferenceBid(right) - getAuctionReferenceBid(left);
+      if (bidDelta !== 0) {
+        return bidDelta;
+      }
+
+      return new Date(left.endsAt).getTime() - new Date(right.endsAt).getTime();
+    });
+    return sorted;
+  }
+
+  sorted.sort((left, right) => {
+    const endDelta = new Date(left.endsAt).getTime() - new Date(right.endsAt).getTime();
+    if (endDelta !== 0) {
+      return endDelta;
     }
-  );
 
-  const {
-    data,
-    error,
-    isLoading,
-    isValidating,
-    size,
-    setSize,
-    mutate
-  } = useApiSWRInfinite(
+    return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+  });
+
+  return sorted;
+}
+
+export function useAuctions(input: UseAuctionsInput = {}): UseAuctionsState {
+  const sort = input.sort ?? "ending_soonest";
+
+  const { data, error, isLoading, isValidating, size, setSize, mutate } = useApiSWRInfinite(
     (index, previousPageData: AuctionsPage | null) => {
       if (previousPageData && previousPageData.auctions.length < previousPageData.limit) {
         return null;
@@ -91,19 +95,17 @@ export function useAuctions(includeOwnedCards: boolean): UseAuctionsState {
     }
   );
 
-  const auctions = useMemo(() => (data ? data.flatMap((page) => page.auctions) : []), [data]);
+  const auctions = useMemo(() => {
+    const flattened = data ? data.flatMap((page) => page.auctions) : [];
+    return sortAuctions(flattened, sort);
+  }, [data, sort]);
+
   const total = data?.[0]?.total ?? 0;
   const hasMore = auctions.length < total;
 
   const refresh = useCallback(async (): Promise<void> => {
-    setActionError(null);
-    if (includeOwnedCards) {
-      await Promise.all([mutate(), mutateOwnedCards()]);
-      return;
-    }
-
     await mutate();
-  }, [includeOwnedCards, mutate, mutateOwnedCards]);
+  }, [mutate]);
 
   const loadMore = useCallback(async (): Promise<void> => {
     if (!hasMore || isValidating) {
@@ -112,30 +114,6 @@ export function useAuctions(includeOwnedCards: boolean): UseAuctionsState {
 
     await setSize((current) => current + 1);
   }, [hasMore, isValidating, setSize]);
-
-  const createAuction = useCallback(
-    async (input: { cardId: string; startingBid: number; durationType: AuctionDurationType }): Promise<string | null> => {
-      setCreatePendingCardId(input.cardId);
-      setActionError(null);
-
-      try {
-        const result = await apiClient.createAuction({
-          cardId: input.cardId,
-          startingBid: input.startingBid,
-          durationType: input.durationType
-        });
-
-        await Promise.all([mutate(), mutateOwnedCards()]);
-        return result.auction.id;
-      } catch (caughtError) {
-        setActionError(mapApiErrorToMessage(caughtError) || "Failed to create auction.");
-        return null;
-      } finally {
-        setCreatePendingCardId(null);
-      }
-    },
-    [mutate, mutateOwnedCards]
-  );
 
   useAuctionsRoom(true, {
     onAuctionCreated: () => {
@@ -166,21 +144,16 @@ export function useAuctions(includeOwnedCards: boolean): UseAuctionsState {
     };
   }, [mutate]);
 
-  const mappedError = error ?? ownedCardsError;
-
   return {
     auctions,
-    ownedCards: ownedCardsData ?? [],
     loading: isLoading && !data,
     loadingMore: Boolean(data) && isValidating,
-    error: actionError ?? (mappedError ? mapApiErrorToMessage(mappedError) || "Failed to load auctions." : null),
+    error: error ? mapApiErrorToMessage(error) || "Failed to load auctions." : null,
     page: size,
     limit: 24,
     total,
     hasMore,
-    createPendingCardId,
     refresh,
-    loadMore,
-    createAuction
+    loadMore
   };
 }

@@ -70,5 +70,13 @@ export const swrKeys = {
   auctions: {
     list: (input: { page?: number; limit?: number } = {}) => createApiKey("auctions:list", input),
     detail: (auctionId: string) => createApiKey("auctions:detail", { auctionId })
+  },
+  packs: {
+    my: (input: { opened?: boolean | null; cursor?: string | null; limit?: number }) =>
+      createApiKey("packs:my:infinite", input)
+  },
+  fairness: {
+    myPacks: (input: { date?: string | null; dropId?: string | null; cursor?: string | null; limit?: number }) =>
+      createApiKey("fairness:my-packs", input)
   }
 } as const;

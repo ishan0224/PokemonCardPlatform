@@ -19,6 +19,8 @@ import {
 } from "@/lib/fairness/verifier-ui";
 import { apiClient } from "@/lib/api-client";
 import { buttonClassName } from "@/components/ui/button";
+import { CardImage } from "@/components/ui/card-image";
+import { formatMoneyCents } from "@/lib/format";
 import { routes } from "@/lib/routes";
 import type { PackTier, RarityTier, SlotDistribution } from "@/lib/types";
 
@@ -54,6 +56,12 @@ type FairnessPackPayload = {
     slotNumber: number;
     rarityTier: RarityTier;
     pokemonCardId: string;
+    pokemonCard: {
+      name: string;
+      imageUrl: string | null;
+      imageUrlHires: string | null;
+      currentPrice: number;
+    };
   }>;
 };
 
@@ -246,6 +254,10 @@ export default function FairnessVerifierPage({ params }: { params: { packId: str
   }, [params.packId]);
 
   const passCount = useMemo(() => state.slotChecks.filter((entry) => entry.pass).length, [state.slotChecks]);
+  const cardMetaById = useMemo(() => {
+    const cards = state.pack?.cards ?? [];
+    return new Map(cards.map((card) => [card.pokemonCardId, card.pokemonCard]));
+  }, [state.pack?.cards]);
 
   return (
     <section className="space-y-5">
@@ -255,10 +267,10 @@ export default function FairnessVerifierPage({ params }: { params: { packId: str
           <p className="mt-1 text-sm text-slate-600">Pack {params.packId.slice(0, 8)} deterministic verification report.</p>
         </div>
         <Link
-          href={routes.drops.index}
+          href={routes.fairness.verifyIndex}
           className={buttonClassName({ variant: "secondary" })}
         >
-          Back to drops
+          Back to verify
         </Link>
       </div>
 
@@ -336,42 +348,87 @@ export default function FairnessVerifierPage({ params }: { params: { packId: str
               </p>
 
               <div className="mt-4 space-y-2">
-                {state.slotChecks.map((slot) => (
-                  <div
-                    key={slot.slotNumber}
-                    className={`rounded-xl border p-3 ${
-                      slot.pass ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"
-                    }`}
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-sm font-bold text-slate-900">Slot {slot.slotNumber}</p>
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs font-bold uppercase ${
-                          slot.pass ? "bg-emerald-200 text-emerald-900" : "bg-rose-200 text-rose-900"
-                        }`}
-                      >
-                        {slot.pass ? "pass" : "fail"}
-                      </span>
-                    </div>
+                {state.slotChecks.map((slot) => {
+                  const expectedCardMeta = slot.expected ? cardMetaById.get(slot.expected.pokemonCardId) ?? null : null;
+                  const actualCardMeta = slot.actual?.pokemonCard ?? null;
 
-                    <div className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
-                      <div className="rounded-lg bg-white/70 p-2">
-                        <p className="font-semibold text-slate-700">Expected</p>
-                        <p className="text-slate-800">
-                          {slot.expected
-                            ? `${slot.expected.rarityTier} / ${slot.expected.pokemonCardId.slice(0, 8)}`
-                            : "missing"}
-                        </p>
+                  return (
+                    <div
+                      key={slot.slotNumber}
+                      className={`rounded-xl border p-3 text-slate-100 ${
+                        slot.pass ? "border-emerald-500 bg-slate-900" : "border-rose-500 bg-slate-950"
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-bold text-slate-100">Slot {slot.slotNumber}</p>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs font-bold uppercase ${
+                            slot.pass ? "bg-emerald-400 text-emerald-950" : "bg-rose-300 text-rose-950"
+                          }`}
+                        >
+                          {slot.pass ? "pass" : "fail"}
+                        </span>
                       </div>
-                      <div className="rounded-lg bg-white/70 p-2">
-                        <p className="font-semibold text-slate-700">Actual</p>
-                        <p className="text-slate-800">
-                          {slot.actual ? `${slot.actual.rarityTier} / ${slot.actual.pokemonCardId.slice(0, 8)}` : "missing"}
-                        </p>
+
+                      <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                        <div className="rounded-lg border border-slate-700 bg-slate-800 p-2">
+                          <p className="font-semibold uppercase tracking-wide text-slate-300">Expected</p>
+                          {slot.expected ? (
+                            <div className="mt-2 flex gap-3">
+                              <CardImage
+                                src={expectedCardMeta?.imageUrl ?? null}
+                                hiresSrc={expectedCardMeta?.imageUrlHires ?? null}
+                                alt={expectedCardMeta?.name ?? `Expected slot ${slot.slotNumber}`}
+                                size="sm"
+                                rarityTier={slot.expected.rarityTier}
+                              />
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-semibold text-slate-100">
+                                  {expectedCardMeta?.name ?? slot.expected.pokemonCardId.slice(0, 8)}
+                                </p>
+                                <p className="text-xs text-slate-300">
+                                  {slot.expected.rarityTier} / {slot.expected.pokemonCardId.slice(0, 8)}
+                                </p>
+                                <p className="mt-1 text-xs text-slate-200">
+                                  Market {expectedCardMeta ? formatMoneyCents(expectedCardMeta.currentPrice) : "N/A"}
+                                </p>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="mt-2 text-slate-300">missing</p>
+                          )}
+                        </div>
+                        <div className="rounded-lg border border-slate-700 bg-slate-800 p-2">
+                          <p className="font-semibold uppercase tracking-wide text-slate-300">Actual</p>
+                          {slot.actual ? (
+                            <div className="mt-2 flex gap-3">
+                              <CardImage
+                                src={actualCardMeta?.imageUrl ?? null}
+                                hiresSrc={actualCardMeta?.imageUrlHires ?? null}
+                                alt={actualCardMeta?.name ?? `Actual slot ${slot.slotNumber}`}
+                                size="sm"
+                                rarityTier={slot.actual.rarityTier}
+                              />
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-semibold text-slate-100">
+                                  {actualCardMeta?.name ?? slot.actual.pokemonCardId.slice(0, 8)}
+                                </p>
+                                <p className="text-xs text-slate-300">
+                                  {slot.actual.rarityTier} / {slot.actual.pokemonCardId.slice(0, 8)}
+                                </p>
+                                <p className="mt-1 text-xs text-slate-200">
+                                  Market {actualCardMeta ? formatMoneyCents(actualCardMeta.currentPrice) : "N/A"}
+                                </p>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="mt-2 text-slate-300">missing</p>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </section>
           ) : null}

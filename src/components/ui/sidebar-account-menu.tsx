@@ -6,6 +6,7 @@ import { apiClient } from "@/lib/api-client";
 import { formatMoneyCents } from "@/lib/format";
 import { routes } from "@/lib/routes";
 import { useAuth } from "@/hooks/use-auth";
+import { NotificationsDrawer } from "@/components/ui/notifications-drawer";
 import { Button, buttonClassName } from "@/components/ui/button";
 
 export function SidebarAccountMenu(): JSX.Element {
@@ -44,18 +45,21 @@ export function SidebarAccountMenu(): JSX.Element {
 
   return (
     <div className="space-y-2 rounded-xl border border-pv-border bg-white p-3">
-      <Button
-        variant="secondary"
-        size="sm"
-        fullWidth
-        onClick={() => {
-          void refreshAuth().catch((error) => {
-            console.error("Failed to refresh auth state:", error);
-          });
-        }}
-      >
-        {balance ? formatMoneyCents(balance.available) : "$0.00"}
-      </Button>
+      <div className="grid grid-cols-2 gap-2">
+        <Button
+          variant="secondary"
+          size="sm"
+          fullWidth
+          onClick={() => {
+            void refreshAuth().catch((error) => {
+              console.error("Failed to refresh auth state:", error);
+            });
+          }}
+        >
+          {balance ? formatMoneyCents(balance.available) : "$0.00"}
+        </Button>
+        <NotificationsDrawer />
+      </div>
 
       <details className="group rounded-lg border border-pv-border bg-pv-parchment-soft p-2">
         <summary className="cursor-pointer list-none text-sm font-semibold text-pv-ink">

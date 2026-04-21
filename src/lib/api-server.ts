@@ -34,8 +34,8 @@ export const serverApiClient = {
   },
 
   async listPacks(userId: string, limit: number): Promise<{ packs: PackSummary[] }> {
-    const packs = await listUserPacks(userId, limit);
-    return { packs: packs as PackSummary[] };
+    const result = await listUserPacks({ userId, limit });
+    return { packs: result.packs as PackSummary[] };
   },
 
   async listCollection(

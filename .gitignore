@@ -25,6 +25,7 @@ pnpm-debug.log*
 
 # docs
 docs/
+demo/
 
 # macOS
 .DS_Store
