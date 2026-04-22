@@ -4,6 +4,7 @@ import type {
   AuctionDurationType,
   AuctionStatus,
   CardState,
+  CollectionCardTransaction,
   DropStatus,
   EconomicsGenerationVersionPage,
   EconomicsRebalanceResult,
@@ -120,6 +121,20 @@ export type CollectionCard = {
     imageUrl: string | null;
     imageUrlHires: string | null;
   };
+};
+
+export type CollectionCardDetail = CollectionCard & {
+  pnlPercent: number;
+  previousPrice: number;
+  acquiredAtIso: string;
+  activeAuctionId: string | null;
+  lineage: {
+    packId: string | null;
+    packTier: PackTier | null;
+    dropId: string | null;
+    dropName: string | null;
+  };
+  transactions: CollectionCardTransaction[];
 };
 
 export type FairnessMyPack = {
@@ -545,6 +560,7 @@ export function mapApiErrorToMessage(error: unknown): string {
         return "Open the pack before revealing cards.";
       case "PACK_NOT_FOUND":
       case "DROP_NOT_FOUND":
+      case "CARD_NOT_FOUND":
         return "The requested item was not found.";
       case "UNAUTHORIZED":
         return "Please log in to continue.";
@@ -582,6 +598,10 @@ export function mapApiErrorToMessage(error: unknown): string {
         return "Bid is below the minimum required amount.";
       case "INVALID_BID_AMOUNT":
         return "Bid amount is invalid.";
+      case "FINAL_WINDOW_CONFIRMATION_REQUIRED":
+        return "Final-window bid confirmation is required.";
+      case "FINAL_WINDOW_RATE_LIMITED":
+        return "Too many final-window bids. Please wait and try again.";
       case "FORBIDDEN":
         return "You do not have permission to access this page.";
       case "INVALID_WINDOW":
@@ -736,6 +756,10 @@ export const apiClient = {
     return requestJson(`/api/collection${query ? `?${query}` : ""}`, { method: "GET", signal });
   },
 
+  getCollectionCard(cardId: string, signal?: AbortSignal): Promise<{ card: CollectionCardDetail }> {
+    return requestJson(`/api/collection/${encodeURIComponent(cardId)}`, { method: "GET", signal });
+  },
+
   getCollectionPortfolio(signal?: AbortSignal): Promise<{ portfolio: CollectionPortfolio }> {
     return requestJson("/api/collection/portfolio", { method: "GET", signal });
   },
@@ -841,18 +865,18 @@ export const apiClient = {
   placeBid(
     auctionId: string,
     amount: number,
-    options?: { confirmHighBid?: boolean; signal?: AbortSignal }
+    options?: { confirmHighBid?: boolean; confirmFinalWindowBid?: boolean; signal?: AbortSignal }
   ): Promise<{
     auction: AuctionDetail;
     bid: AuctionBid;
     timeExtended: boolean;
   }> {
-    // Phase 5 B3: confirmHighBid is opt-in for bypassing the suspicious
-    // ceiling. Only serialize the field when explicitly true — the server
-    // already treats missing/false identically, keeping the wire minimal.
-    const body: { amount: number; confirmHighBid?: true } = { amount };
+    const body: { amount: number; confirmHighBid?: true; confirmFinalWindowBid?: true } = { amount };
     if (options?.confirmHighBid === true) {
       body.confirmHighBid = true;
+    }
+    if (options?.confirmFinalWindowBid === true) {
+      body.confirmFinalWindowBid = true;
     }
     return requestJson(`/api/auctions/${auctionId}/bid`, {
       method: "POST",

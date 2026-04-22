@@ -5,6 +5,11 @@ node_modules/
 .next/
 out/
 
+scripts/
+
+
+# Ignore nested test directories across the repo
+**/__tests__/
 # build artifacts
 dist/
 coverage/

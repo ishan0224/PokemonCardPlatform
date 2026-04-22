@@ -13,7 +13,8 @@ export const routes = {
     detail: (dropId: string) => `/drops/${encodeSegment(dropId)}`
   },
   collection: {
-    index: "/collection"
+    index: "/collection",
+    detail: (cardId: string) => `/collection/${encodeSegment(cardId)}`
   },
   marketplace: {
     index: "/marketplace"
@@ -29,13 +30,16 @@ export const routes = {
   },
   fairness: {
     verifyIndex: "/verify",
-    verify: (packId: string) => `/fairness/verify/${encodeSegment(packId)}`
+    verify: (packId: string) => `/verify/${encodeSegment(packId)}`,
+    publicVerifyIndex: "/fairness/verify",
+    publicVerify: (packId: string) => `/fairness/verify/${encodeSegment(packId)}`
   },
   legal: {
     terms: "/terms",
     privacy: "/privacy",
     about: "/about",
-    fairnessExplainer: "/fairness"
+    fairnessExplainer: "/fairness",
+    fairnessAudit: "/fairness/audit"
   },
   admin: {
     index: "/admin",

@@ -36,6 +36,16 @@ function buildRequestHeaders(request: NextRequest): Headers {
 }
 
 function decodeJwtExp(accessToken: string): number | null {
+  const payload = decodeJwtPayload(accessToken);
+  if (!payload) {
+    return null;
+  }
+
+  const exp = Number(payload.exp);
+  return Number.isFinite(exp) ? exp : null;
+}
+
+function decodeJwtPayload(accessToken: string): Record<string, unknown> | null {
   const segments = accessToken.split(".");
   if (segments.length < 2) {
     return null;
@@ -44,9 +54,7 @@ function decodeJwtExp(accessToken: string): number | null {
   try {
     const payload = segments[1].replace(/-/g, "+").replace(/_/g, "/");
     const paddedPayload = payload.padEnd(payload.length + ((4 - (payload.length % 4)) % 4), "=");
-    const parsedPayload = JSON.parse(atob(paddedPayload)) as { exp?: unknown };
-    const exp = Number(parsedPayload.exp);
-    return Number.isFinite(exp) ? exp : null;
+    return JSON.parse(atob(paddedPayload)) as Record<string, unknown>;
   } catch (_error) {
     return null;
   }

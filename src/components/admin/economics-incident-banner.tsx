@@ -5,6 +5,7 @@ type EconomicsIncidentBannerProps = {
   tiers: PackTierEconomics[];
   tiersLosingMoneyCount: number;
   incidentDeltaBps: number;
+  persisted?: boolean;
 };
 
 function isTierOutOfBand(tier: PackTierEconomics, deltaBps: number): boolean {
@@ -15,7 +16,8 @@ function isTierOutOfBand(tier: PackTierEconomics, deltaBps: number): boolean {
 export function EconomicsIncidentBanner({
   tiers,
   tiersLosingMoneyCount,
-  incidentDeltaBps
+  incidentDeltaBps,
+  persisted
 }: EconomicsIncidentBannerProps): JSX.Element | null {
   const outOfBandTiers = tiers.filter((tier) => isTierOutOfBand(tier, incidentDeltaBps));
 
@@ -62,6 +64,11 @@ export function EconomicsIncidentBanner({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {persisted ? (
+            <span className="rounded-[10px] border border-pv-line bg-pv-surface-3 px-2 py-1 text-[11px] font-bold text-pv-muted">
+              Persisted
+            </span>
+          ) : null}
           <button
             type="button"
             className="inline-flex min-h-9 items-center rounded-[10px] border border-transparent px-3 py-1.5 text-[12px] font-bold text-pv-muted hover:bg-pv-surface-2 hover:text-pv-text"

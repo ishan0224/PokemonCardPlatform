@@ -687,3 +687,46 @@ export async function getLatestNightlyFairnessAuditResult(
     return mapAuditRow(row, sampleSize);
   });
 }
+
+export type PublicFairnessAuditResult = {
+  windowStart: string;
+  windowEnd: string;
+  sampleSize: number;
+  observedCounts: Record<RarityTier, number>;
+  expectedCounts: Record<RarityTier, number>;
+  pValue: number;
+  chiSquared: number;
+  degreesOfFreedom: number;
+  monteCarloApplied: boolean;
+  monteCarloSampleCount: number | null;
+  runSource: "nightly";
+  ranAt: string;
+};
+
+function mapPublicNightlyAuditResult(audit: FairnessAuditResult): PublicFairnessAuditResult {
+  return {
+    windowStart: audit.windowStartIso,
+    windowEnd: audit.windowEndIso,
+    sampleSize: audit.sampleSize,
+    observedCounts: audit.observedCounts,
+    expectedCounts: audit.expectedCounts,
+    pValue: audit.pValue,
+    chiSquared: audit.testStatistic,
+    degreesOfFreedom: audit.degreesOfFreedom,
+    monteCarloApplied: audit.monteCarloApplied,
+    monteCarloSampleCount: audit.monteCarloSamples,
+    runSource: "nightly",
+    ranAt: audit.ranAtIso
+  };
+}
+
+export async function getLatestPublicFairnessAuditResult(
+  windowDays = DEFAULT_WINDOW_DAYS
+): Promise<PublicFairnessAuditResult | null> {
+  const audit = await getLatestNightlyFairnessAuditResult(windowDays);
+  if (!audit) {
+    return null;
+  }
+
+  return mapPublicNightlyAuditResult(audit);
+}

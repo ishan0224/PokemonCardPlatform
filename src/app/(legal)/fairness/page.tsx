@@ -20,9 +20,12 @@ export default function FairnessExplainerPage(): JSX.Element {
         This explainer is development placeholder copy and not a formal security whitepaper. Replace it with validated public
         documentation before production.
       </p>
-      <div className="mt-5">
-        <Link href={routes.fairness.verifyIndex} className={buttonClassName({ variant: "secondary", size: "sm" })}>
+      <div className="mt-5 flex flex-wrap items-center gap-2">
+        <Link href={routes.fairness.publicVerifyIndex} className={buttonClassName({ variant: "secondary", size: "sm" })}>
           Open Verifier
+        </Link>
+        <Link href={routes.legal.fairnessAudit} className={buttonClassName({ variant: "ghost", size: "sm" })}>
+          View Aggregate Audit
         </Link>
       </div>
     </LegalShell>

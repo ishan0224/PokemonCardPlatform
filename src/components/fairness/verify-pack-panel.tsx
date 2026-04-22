@@ -92,6 +92,11 @@ type VerificationState = {
   overallPass: boolean;
 };
 
+type VerifyPackPanelProps = {
+  packId: string;
+  verifyIndexHref: string;
+};
+
 function emptyState(): VerificationState {
   return {
     loading: true,
@@ -184,7 +189,7 @@ async function verifyPackLocally(pack: FairnessPackPayload): Promise<{
   return { slotChecks, overallPass };
 }
 
-export default function FairnessVerifierPage({ params }: { params: { packId: string } }): JSX.Element {
+export function VerifyPackPanel({ packId, verifyIndexHref }: VerifyPackPanelProps): JSX.Element {
   const [state, setState] = useState<VerificationState>(() => emptyState());
 
   useEffect(() => {
@@ -195,7 +200,7 @@ export default function FairnessVerifierPage({ params }: { params: { packId: str
       try {
         const [vectorResponse, packResponse] = await Promise.all([
           apiClient.getFairnessTestVector(),
-          apiClient.getFairnessPack(params.packId)
+          apiClient.getFairnessPack(packId)
         ]);
 
         const vectorPayload = vectorResponse as VectorApiResponse;
@@ -253,7 +258,7 @@ export default function FairnessVerifierPage({ params }: { params: { packId: str
     return () => {
       cancelled = true;
     };
-  }, [params.packId]);
+  }, [packId]);
 
   const passCount = useMemo(() => state.slotChecks.filter((entry) => entry.pass).length, [state.slotChecks]);
   const cardMetaById = useMemo(() => {
@@ -270,11 +275,14 @@ export default function FairnessVerifierPage({ params }: { params: { packId: str
     <section className="space-y-5">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 text-[12px]">
-          <Link href={routes.fairness.verifyIndex} className="text-pv-muted hover:text-pv-text">
+          <Link href={verifyIndexHref} className="text-pv-muted hover:text-pv-text">
             ← Verify
           </Link>
+          <Link href={routes.legal.fairnessAudit} className="text-pv-muted hover:text-pv-text">
+            Aggregate audit →
+          </Link>
           <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
-            Pack #{params.packId.slice(0, 8)}
+            Pack #{packId.slice(0, 8)}
           </span>
         </div>
       </div>
@@ -507,9 +515,15 @@ export default function FairnessVerifierPage({ params }: { params: { packId: str
             </section>
           ) : null}
 
-          <div className="flex flex-wrap justify-end">
+          <div className="flex flex-wrap justify-end gap-2">
             <Link
-              href={routes.fairness.verifyIndex}
+              href={routes.legal.fairnessAudit}
+              className={buttonClassName({ variant: "secondary", size: "sm" })}
+            >
+              Aggregate audit
+            </Link>
+            <Link
+              href={verifyIndexHref}
               className={buttonClassName({ variant: "ghost", size: "sm" })}
             >
               Back to verify

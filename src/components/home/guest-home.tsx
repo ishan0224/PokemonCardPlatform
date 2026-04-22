@@ -97,7 +97,10 @@ export async function GuestHome(): Promise<JSX.Element> {
       <footer className="flex flex-wrap items-center gap-4 border-t border-pv-border pt-4 text-sm text-pv-muted">
         <span>Terms</span>
         <span>Privacy</span>
-        <Link href={routes.fairness.verifyIndex} className="font-semibold text-pv-accent hover:text-pv-accent-strong">
+        <Link
+          href={routes.fairness.publicVerifyIndex}
+          className="font-semibold text-pv-accent hover:text-pv-accent-strong"
+        >
           Fairness
         </Link>
       </footer>

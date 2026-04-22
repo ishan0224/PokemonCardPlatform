@@ -21,7 +21,10 @@ type UseAuctionState = {
   bidPending: boolean;
   watcherCount: number;
   refresh: () => Promise<void>;
-  placeBid: (amount: number, options?: { confirmHighBid?: boolean }) => Promise<PlaceBidOutcome>;
+  placeBid: (
+    amount: number,
+    options?: { confirmHighBid?: boolean; confirmFinalWindowBid?: boolean }
+  ) => Promise<PlaceBidOutcome>;
 };
 
 export function useAuction(auctionId: string, enableRealtime = true): UseAuctionState {
@@ -104,7 +107,10 @@ export function useAuction(auctionId: string, enableRealtime = true): UseAuction
   }, [auctionId]);
 
   const placeBid = useCallback(
-    async (amount: number, options?: { confirmHighBid?: boolean }): Promise<PlaceBidOutcome> => {
+    async (
+      amount: number,
+      options?: { confirmHighBid?: boolean; confirmFinalWindowBid?: boolean }
+    ): Promise<PlaceBidOutcome> => {
       if (!mountedRef.current) {
         return { ok: false, error: new Error("unmounted") };
       }
@@ -114,7 +120,8 @@ export function useAuction(auctionId: string, enableRealtime = true): UseAuction
 
       try {
         const result = await apiClient.placeBid(auctionId, amount, {
-          confirmHighBid: options?.confirmHighBid
+          confirmHighBid: options?.confirmHighBid,
+          confirmFinalWindowBid: options?.confirmFinalWindowBid
         });
         if (!mountedRef.current) {
           return { ok: true };

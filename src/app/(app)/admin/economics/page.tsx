@@ -15,7 +15,9 @@ import { EconomicsIncidentBanner } from "@/components/admin/economics-incident-b
 import { EconomicsKpiStrip } from "@/components/admin/economics-kpi-strip";
 import { PackTierTable } from "@/components/admin/pack-tier-table";
 import { RevenueMixDonut } from "@/components/admin/revenue-mix-donut";
+import { RevenueProjectionCard } from "@/components/admin/revenue-projection-card";
 import { RevenueTimeChart } from "@/components/admin/revenue-time-chart";
+import { AuctionPriceVsMarketCard } from "@/components/admin/auction-price-vs-market-card";
 import { TopAuctionsList } from "@/components/admin/top-auctions-list";
 import { IntegrityList } from "@/components/admin/integrity-list";
 import { StatusPanel } from "@/components/admin/status-panel";
@@ -72,6 +74,7 @@ export default function AdminEconomicsPage(): JSX.Element {
     forbidden: false
   });
   const [rerunningFairness, setRerunningFairness] = useState(false);
+  const [lastPersistedMetricsDelta, setLastPersistedMetricsDelta] = useState(false);
 
   const loadFairnessAudit = useCallback(
     async (
@@ -101,6 +104,7 @@ export default function AdminEconomicsPage(): JSX.Element {
           loadFairnessAudit("latest", signal),
           loadFairnessAudit("nightly", signal)
         ]);
+        setLastPersistedMetricsDelta(false);
         setState({
           summary: summaryResult.summary,
           bundle: packResult.bundle,
@@ -117,6 +121,7 @@ export default function AdminEconomicsPage(): JSX.Element {
           return;
         }
         const forbidden = error instanceof ApiClientError && (error.status === 401 || error.status === 403);
+        setLastPersistedMetricsDelta(false);
         setState({
           summary: null,
           bundle: null,
@@ -171,6 +176,10 @@ export default function AdminEconomicsPage(): JSX.Element {
 
   useAdminMetricsRoom(user?.role === "admin", {
     onMetricsDelta: (event: AdminMetricsDeltaEvent) => {
+      if (event.persisted === true) {
+        setLastPersistedMetricsDelta(true);
+      }
+
       setState((prev) => {
         if (!prev.bundle) {
           return prev;
@@ -183,11 +192,23 @@ export default function AdminEconomicsPage(): JSX.Element {
             rateLimitHitCount24h: clampNonNegative(
               prev.bundle.rateLimitHitCount24h + event.rateLimitHitCountDelta
             ),
+            rateLimitHitGlobalCount24h: clampNonNegative(
+              prev.bundle.rateLimitHitGlobalCount24h + event.rateLimitHitGlobalCountDelta
+            ),
+            autoRebalanceTriggeredCount24h: clampNonNegative(
+              prev.bundle.autoRebalanceTriggeredCount24h + event.autoRebalanceTriggeredCountDelta
+            ),
+            finalWindowBidCount24h: clampNonNegative(
+              prev.bundle.finalWindowBidCount24h + event.finalWindowBidCountDelta
+            ),
             openAuctionFlagCount: clampNonNegative(
               prev.bundle.openAuctionFlagCount + event.openAuctionFlagCountDelta
             ),
             marginIncidentCount24h: clampNonNegative(
               prev.bundle.marginIncidentCount24h + event.marginIncidentCountDelta
+            ),
+            marginAlertCount24h: clampNonNegative(
+              prev.bundle.marginAlertCount24h + (event.persisted ? event.marginIncidentCountDelta : 0)
             )
           }
         };
@@ -281,26 +302,29 @@ export default function AdminEconomicsPage(): JSX.Element {
             tiers={state.bundle.tiers}
             tiersLosingMoneyCount={state.bundle.integrity.tiersLosingMoneyCount}
             incidentDeltaBps={state.bundle.incidentDeltaBps}
+            persisted={lastPersistedMetricsDelta}
           />
 
           <EconomicsKpiStrip summary={state.summary} tiers={state.bundle.tiers} />
 
           {/* DEMO SECTION: hourly bars + revenue mix donut */}
-          <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.6fr_1fr]">
+          <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.5fr_1fr_1fr]">
             <div className="rounded-pv-lg border border-pv-line bg-pv-surface-2 p-6">
               <RevenueTimeChart series={state.summary.hourlySeries} />
             </div>
             <div className="rounded-pv-lg border border-pv-line bg-pv-surface-2 p-6">
               <RevenueMixDonut summary={state.summary} />
             </div>
+            <RevenueProjectionCard projection={state.summary.revenueProjection} />
           </section>
 
           {/* PACK TIER TABLE */}
           <PackTierTable tiers={state.bundle.tiers} portfolio={state.bundle.portfolio} />
 
-          {/* DEMO SECTION: three-col top auctions / worst packs / integrity */}
-          <section className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-3">
+          {/* DEMO SECTION: auction + integrity cards */}
+          <section className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-2 xl:grid-cols-4">
             <TopAuctionsList auctions={state.bundle.topAuctions} />
+            <AuctionPriceVsMarketCard metrics={state.bundle.auctionPriceVsMarket} />
             <WorstPacksList packs={state.bundle.worstPacks} />
             <IntegrityList integrity={state.bundle.integrity} />
           </section>
@@ -308,7 +332,79 @@ export default function AdminEconomicsPage(): JSX.Element {
           {/* WHAT-IF SIMULATOR */}
           <WhatIfSimulatorStub bundle={state.bundle} />
 
-          <section className="grid grid-cols-1 gap-3 xl:grid-cols-3">
+          <section className="grid grid-cols-1 gap-3 xl:grid-cols-8">
+            <div className="rounded-pv-lg border border-pv-line bg-pv-surface-2 p-5">
+              <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                Rate-limit hits (24h)
+              </p>
+              <p className="mt-2 text-[24px] font-extrabold text-pv-text">
+                {state.bundle.rateLimitHitCount24h.toLocaleString()}
+              </p>
+              <p className="mt-2 text-[12px] text-pv-muted">
+                global scope{" "}
+                <span className="font-extrabold text-pv-text">
+                  {state.bundle.rateLimitHitGlobalCount24h.toLocaleString()}
+                </span>
+              </p>
+            </div>
+
+            <div className="rounded-pv-lg border border-pv-line bg-pv-surface-2 p-5">
+              <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                Margin alerts (24h)
+              </p>
+              <p className="mt-2 text-[24px] font-extrabold text-pv-text">
+                {state.bundle.marginAlertCount24h.toLocaleString()}
+              </p>
+              {state.bundle.recentMarginAlerts.length === 0 ? (
+                <p className="mt-2 text-[12px] text-pv-muted">No recent margin alerts.</p>
+              ) : (
+                <ul className="mt-2 space-y-1 text-[12px] text-pv-muted">
+                  {state.bundle.recentMarginAlerts.map((alert, index) => (
+                    <li key={`${alert.ranAtIso}-${alert.tier}-${alert.direction}-${index}`}>
+                      {alert.tier} · {alert.direction === "below_band" ? "below" : "above"} · Δ{" "}
+                      {alert.deltaBps.toLocaleString()}bps · {new Date(alert.ranAtIso).toLocaleTimeString()}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="rounded-pv-lg border border-pv-line bg-pv-surface-2 p-5">
+              <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                Auto-rebalance (24h)
+              </p>
+              <p className="mt-2 text-[24px] font-extrabold text-pv-text">
+                {state.bundle.autoRebalanceTriggeredCount24h.toLocaleString()}
+              </p>
+              <p className="mt-2 text-[12px] text-pv-muted">
+                Successful auto-triggered rebalance evaluations.
+              </p>
+            </div>
+
+            <div className="rounded-pv-lg border border-pv-line bg-pv-surface-2 p-5">
+              <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                Verification usage (7d)
+              </p>
+              <p className="mt-2 text-[24px] font-extrabold text-pv-text">
+                {state.bundle.verificationUsageDistinctUsers7d.toLocaleString()}
+              </p>
+              <p className="mt-2 text-[12px] text-pv-muted">
+                Distinct users who ran a provably-fair check.
+              </p>
+            </div>
+
+            <div className="rounded-pv-lg border border-pv-line bg-pv-surface-2 p-5">
+              <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                Final-window bids (24h)
+              </p>
+              <p className="mt-2 text-[24px] font-extrabold text-pv-text">
+                {state.bundle.finalWindowBidCount24h.toLocaleString()}
+              </p>
+              <p className="mt-2 text-[12px] text-pv-muted">
+                Accepted bids tagged with final-window bid telemetry.
+              </p>
+            </div>
+
             <div className="rounded-pv-lg border border-pv-line bg-pv-surface-2 p-5">
               <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
                 Drop engagement

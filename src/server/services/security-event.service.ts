@@ -6,8 +6,22 @@ type Queryable = {
   query<T extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]): Promise<QueryResult<T>>;
 };
 
+export type SecurityEventType =
+  | "rate_limit_hit"
+  | "lottery_loss"
+  | "lottery_win"
+  | "lottery_unavailable"
+  | "purchase_failed"
+  | "fairness_verification_run"
+  | "margin_incident"
+  | "margin_alert"
+  | "margin_alert_dedup_unavailable"
+  | "auto_rebalance_triggered"
+  | "auto_rebalance_skipped"
+  | "final_window_bid";
+
 export type SecurityEventInput = {
-  eventType: string;
+  eventType: SecurityEventType;
   userId?: string | null;
   ip?: string | null;
   requestKey?: string | null;
@@ -35,7 +49,21 @@ export async function writeSecurityEvent(
   );
 
   if (input.eventType === "rate_limit_hit") {
-    emitAdminMetricsDeltaFireAndForget({ rateLimitHitCountDelta: 1 });
+    const scope = input.evidence?.scope;
+    emitAdminMetricsDeltaFireAndForget({
+      rateLimitHitCountDelta: 1,
+      rateLimitHitGlobalCountDelta: scope === "global" ? 1 : 0
+    });
+  } else if (input.eventType === "auto_rebalance_triggered") {
+    emitAdminMetricsDeltaFireAndForget({
+      autoRebalanceTriggeredCountDelta: 1,
+      persisted: true
+    });
+  } else if (input.eventType === "final_window_bid") {
+    emitAdminMetricsDeltaFireAndForget({
+      finalWindowBidCountDelta: 1,
+      persisted: true
+    });
   }
 }
 

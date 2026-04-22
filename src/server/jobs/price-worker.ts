@@ -13,6 +13,7 @@ import {
   recoverStaleRunningPriceUpdateJobs
 } from "../services/price-queue.service";
 import { processPriceBatchByPokemonCardIds } from "../services/price.service";
+import { maybeTriggerAutoRebalance } from "../economics/auto-rebalance-coordinator";
 import type { JobStopper } from "./price-poller";
 
 async function waitForTickDrain(isRunning: () => boolean): Promise<void> {
@@ -68,6 +69,10 @@ export function startPriceWorker(): JobStopper {
       try {
         const result = await processPriceBatchByPokemonCardIds(job.payload.pokemonCardIds);
         await markPriceUpdateJobCompleted(job.id);
+        void maybeTriggerAutoRebalance().catch((error) => {
+          const typed = error as { message?: string };
+          console.warn(`[price-worker] auto-rebalance trigger failed: ${typed.message ?? "unknown error"}`);
+        });
 
         if (PRICE_JOB_ACTIVITY_LOGS_ENABLED && result.changedCards > 0) {
           console.log(

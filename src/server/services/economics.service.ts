@@ -3,12 +3,15 @@ import { ApiRouteError } from "../http/api";
 import { query } from "../db/pool";
 import { PACK_TIER_CONFIGS, PACK_TIERS } from "../config/pack-tiers";
 import { getAuctionSnipeMetrics } from "./auction-snipe-metrics.service";
+import { LONE_BIDDER_MARKET_RATIO_THRESHOLD } from "./auction-wash-trade.service";
 import {
   AUCTION_FEE_BPS,
   ECONOMICS_DEFAULT_WINDOW_HOURS,
   ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS,
   ECONOMICS_MAX_WINDOW_DAYS,
   RARITY_ANCHOR_FALLBACK_CENTS,
+  REVENUE_PROJECTION_HORIZON_DAYS,
+  REVENUE_PROJECTION_WINDOW_DAYS,
   TARGET_HOUSE_EDGE_BPS,
   TRADING_FEE_BPS
 } from "../config/constants";
@@ -18,11 +21,14 @@ import type {
   HourlyRevenueBucket,
   IntegrityCheckResult,
   IntegrityChecks,
+  MarginAlertSnapshot,
   PackEconomicsBundle,
   PackTier,
   PackTierCount,
   PackTierEconomics,
   RarityTier,
+  RevenueProjection,
+  RevenueProjectionStreamKey,
   RevenueStreamBreakdown,
   RevenueStreamKey,
   TopAuction,
@@ -30,6 +36,7 @@ import type {
   WorstPack
 } from "../../lib/types";
 import { RARITY_TIERS } from "../../lib/types";
+import { maybeFireMarginAlert } from "./margin-alert.service";
 
 const REVENUE_STREAM_KEYS: readonly RevenueStreamKey[] = [
   "pack_margin",
@@ -38,8 +45,14 @@ const REVENUE_STREAM_KEYS: readonly RevenueStreamKey[] = [
   "platform_discount",
   "manual_adjustment"
 ];
+const REVENUE_PROJECTION_STREAM_KEYS: readonly RevenueProjectionStreamKey[] = [
+  "pack_margin",
+  "trade_fee",
+  "auction_fee"
+];
 
 const FEE_MATH_EPSILON_BPS = 2;
+const REVENUE_PROJECTION_MIN_SAMPLE_TRANSACTIONS = 10;
 
 export type WindowParams = { from: Date; to: Date };
 
@@ -316,19 +329,119 @@ async function fetchHourlySeries(params: WindowParams): Promise<HourlyRevenueBuc
   return Array.from(buckets.values()).sort((a, b) => a.hourIso.localeCompare(b.hourIso));
 }
 
+type RevenueProjectionSource = {
+  totalByStream: Record<RevenueProjectionStreamKey, number>;
+  transactionCount: number;
+};
+
+async function fetchRevenueProjectionSource(windowDays: number): Promise<RevenueProjectionSource> {
+  const now = new Date();
+  const from = new Date(now.getTime() - windowDays * 24 * 60 * 60 * 1000);
+
+  const [streamResult, transactionResult] = await Promise.all([
+    query<{ type: RevenueProjectionStreamKey; total: string }>(
+      `SELECT type, COALESCE(SUM(amount), 0)::BIGINT AS total
+       FROM platform_revenue
+       WHERE type IN ('pack_margin', 'trade_fee', 'auction_fee')
+         AND created_at >= $1
+         AND created_at < $2
+       GROUP BY type`,
+      [from, now]
+    ),
+    query<{ n: string }>(
+      `SELECT COUNT(*)::BIGINT AS n
+       FROM transactions
+       WHERE type IN ('pack_purchase', 'trade_buy', 'auction_win')
+         AND created_at >= $1
+         AND created_at < $2`,
+      [from, now]
+    )
+  ]);
+
+  const totalByStream: Record<RevenueProjectionStreamKey, number> = {
+    pack_margin: 0,
+    trade_fee: 0,
+    auction_fee: 0
+  };
+  for (const row of streamResult.rows) {
+    totalByStream[row.type] = Number(row.total);
+  }
+
+  return {
+    totalByStream,
+    transactionCount: Number(transactionResult.rows[0]?.n ?? 0)
+  };
+}
+
+function computeRevenueProjection(
+  source: RevenueProjectionSource,
+  options: { windowDays: number; horizonDays: number }
+): RevenueProjection {
+  const windowDays = Math.max(Math.trunc(options.windowDays), 1);
+  const horizonDays = Math.max(Math.trunc(options.horizonDays), 1);
+  const insufficientSample = source.transactionCount < REVENUE_PROJECTION_MIN_SAMPLE_TRANSACTIONS;
+
+  const perStream = {
+    pack_margin: {
+      historicalDaily: 0,
+      projectedHorizon: 0,
+      method: "linear_extrapolation"
+    },
+    trade_fee: {
+      historicalDaily: 0,
+      projectedHorizon: 0,
+      method: "linear_extrapolation"
+    },
+    auction_fee: {
+      historicalDaily: 0,
+      projectedHorizon: 0,
+      method: "linear_extrapolation"
+    }
+  } satisfies RevenueProjection["perStream"];
+
+  if (!insufficientSample) {
+    for (const stream of REVENUE_PROJECTION_STREAM_KEYS) {
+      const daily = new Decimal(source.totalByStream[stream])
+        .div(windowDays)
+        .toDecimalPlaces(0, Decimal.ROUND_HALF_UP)
+        .toNumber();
+      perStream[stream].historicalDaily = daily;
+      perStream[stream].projectedHorizon = daily * horizonDays;
+    }
+  }
+
+  const totalProjectedHorizon = REVENUE_PROJECTION_STREAM_KEYS.reduce(
+    (acc, stream) => acc + perStream[stream].projectedHorizon,
+    0
+  );
+
+  return {
+    windowDays,
+    horizonDays,
+    perStream,
+    totalProjectedHorizon
+  };
+}
+
 export async function getEconomicsSummary(params: WindowParams): Promise<EconomicsSummary> {
-  const [revenue, gmv, packs, trades, auctionStats, hourly] = await Promise.all([
+  const [revenue, gmv, packs, trades, auctionStats, hourly, marginAlertStats, projectionSource] = await Promise.all([
     fetchRevenueByStream(params),
     fetchGmvBreakdown(params),
     fetchPacksByTier(params),
     fetchTradesExecuted(params),
     fetchAuctionStats(params),
-    fetchHourlySeries(params)
+    fetchHourlySeries(params),
+    fetchMarginAlertStats24h(),
+    fetchRevenueProjectionSource(REVENUE_PROJECTION_WINDOW_DAYS)
   ]);
 
   const gmvTotal = gmv.packCents + gmv.tradeCents + gmv.auctionCents;
   const netRevenue = revenue.breakdown.reduce((acc, entry) => acc + entry.totalCents, 0);
   const takeRateBps = bpsFromRatio(netRevenue, gmvTotal);
+  const revenueProjection = computeRevenueProjection(projectionSource, {
+    windowDays: REVENUE_PROJECTION_WINDOW_DAYS,
+    horizonDays: REVENUE_PROJECTION_HORIZON_DAYS
+  });
 
   return {
     window: toEconomicsWindow(params),
@@ -349,7 +462,10 @@ export async function getEconomicsSummary(params: WindowParams): Promise<Economi
     auctionAverageWinningBidCents: auctionStats.avgBidCents,
     auctionMaxWinningBidCents: auctionStats.maxBidCents,
     platformRevenueRowCount: revenue.rowCount,
-    transactionRowCount: gmv.transactionRowCount
+    transactionRowCount: gmv.transactionRowCount,
+    revenueProjection,
+    marginAlertCount24h: marginAlertStats.marginAlertCount24h,
+    recentMarginAlerts: marginAlertStats.recentMarginAlerts
   };
 }
 
@@ -432,6 +548,7 @@ export async function getPackEconomics(params: WindowParams): Promise<{
 }> {
   const [marginByTier, anchorResult] = await Promise.all([fetchPerTierMargin(params), fetchRarityAnchors()]);
   const { anchors, sourceByRarity } = anchorResult;
+  const windowSeconds = Math.max(Math.trunc((params.to.getTime() - params.from.getTime()) / 1_000), 1);
 
   const tiers: PackTierEconomics[] = PACK_TIERS.map((tier) => {
     const config = PACK_TIER_CONFIGS[tier];
@@ -476,6 +593,24 @@ export async function getPackEconomics(params: WindowParams): Promise<{
     const packsPurchased = Number(row.packs_purchased);
     const actualEv = Number(row.avg_realized_ev);
     const actualEdgeBps = bpsFromRatio(priceCents - actualEv, priceCents);
+    const targetHouseEdgeBps = TARGET_HOUSE_EDGE_BPS[tier];
+    const deltaHouseEdgeBps = actualEdgeBps - targetHouseEdgeBps;
+
+    if (Math.abs(deltaHouseEdgeBps) > ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS) {
+      const direction = deltaHouseEdgeBps < 0 ? "below_band" : "above_band";
+      void maybeFireMarginAlert({
+        tier,
+        direction,
+        targetEdgeBps: targetHouseEdgeBps,
+        observedEdgeBps: actualEdgeBps,
+        deltaBps: deltaHouseEdgeBps,
+        sampleSize: packsPurchased,
+        windowSeconds
+      }).catch((error) => {
+        const typed = error as { message?: string };
+        console.warn(`[economics] margin alert dispatch failed for ${tier}: ${typed.message ?? "unknown error"}`);
+      });
+    }
 
     return {
       tier,
@@ -490,7 +625,7 @@ export async function getPackEconomics(params: WindowParams): Promise<{
       sigmaMarginCents: Number(row.sigma_margin),
       bestMarginCents: Number(row.best_margin),
       worstMarginCents: Number(row.worst_margin),
-      targetHouseEdgeBps: TARGET_HOUSE_EDGE_BPS[tier],
+      targetHouseEdgeBps,
       anchorSource,
       anchorFallbackRarities: fallbackRarities.length > 0 ? fallbackRarities : undefined
     };
@@ -618,6 +753,55 @@ export async function getTopAuctions(params: WindowParams, limit = 5): Promise<T
     cardName: row.card_name,
     cardImageUrl: row.card_image_url
   }));
+}
+
+type AuctionPriceVsMarketMetricsCore = Omit<PackEconomicsBundle["auctionPriceVsMarket"], "window">;
+
+async function getAuctionPriceVsMarketMetrics(params: WindowParams): Promise<AuctionPriceVsMarketMetricsCore> {
+  const result = await query<{
+    sample_size: string;
+    mean_ratio: string;
+    p10: string;
+    p50: string;
+    p90: string;
+    low_ratio_count: string;
+    high_ratio_count: string;
+  }>(
+    `WITH ratios AS (
+       SELECT (a.current_bid::numeric / pc.current_price::numeric) AS ratio
+       FROM auctions a
+       JOIN cards c ON c.id = a.card_id
+       JOIN pokemon_cards pc ON pc.id = c.pokemon_card_id
+       WHERE a.status = 'completed'
+         AND a.current_bid IS NOT NULL
+         AND a.ends_at >= $1
+         AND a.ends_at < $2
+         AND pc.current_price > 0
+     )
+     SELECT COUNT(*)::BIGINT AS sample_size,
+            COALESCE(AVG(ratio), 0)::TEXT AS mean_ratio,
+            COALESCE(PERCENTILE_CONT(0.1) WITHIN GROUP (ORDER BY ratio), 0)::TEXT AS p10,
+            COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ratio), 0)::TEXT AS p50,
+            COALESCE(PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY ratio), 0)::TEXT AS p90,
+            COALESCE(SUM(CASE WHEN ratio < $3::numeric THEN 1 ELSE 0 END), 0)::BIGINT AS low_ratio_count,
+            COALESCE(SUM(CASE WHEN ratio > 2::numeric THEN 1 ELSE 0 END), 0)::BIGINT AS high_ratio_count
+     FROM ratios`,
+    [params.from, params.to, LONE_BIDDER_MARKET_RATIO_THRESHOLD]
+  );
+
+  const row = result.rows[0];
+  const p50 = roundMetric(Number(row?.p50 ?? 0));
+
+  return {
+    sampleSize: Number(row?.sample_size ?? 0),
+    medianRatio: p50,
+    meanRatio: roundMetric(Number(row?.mean_ratio ?? 0)),
+    p10: roundMetric(Number(row?.p10 ?? 0)),
+    p50,
+    p90: roundMetric(Number(row?.p90 ?? 0)),
+    lowRatioCount: Number(row?.low_ratio_count ?? 0),
+    highRatioCount: Number(row?.high_ratio_count ?? 0)
+  };
 }
 
 async function checkFeeMath(params: WindowParams): Promise<{
@@ -787,9 +971,13 @@ export async function getPackEconomicsBundle(params: WindowParams): Promise<Pack
     topAuctions,
     integrity,
     auctionSnipeMetrics,
-    rateLimitHitCount24h,
+    auctionPriceVsMarketCore,
+    rateLimitHitCounts24h,
+    autoRebalanceTriggeredCount24h,
+    finalWindowBidCount24h,
     openAuctionFlagCount,
     marginIncidentCount24h,
+    marginAlertStats,
     verificationUsageDistinctUsers7d,
     userHealth
   ] = await Promise.all([
@@ -797,15 +985,20 @@ export async function getPackEconomicsBundle(params: WindowParams): Promise<Pack
     getTopAuctions(params),
     getIntegrityChecks(params, tiers),
     getAuctionSnipeMetrics(params),
-    fetchRateLimitHitCount24h(),
+    getAuctionPriceVsMarketMetrics(params),
+    fetchRateLimitHitCounts24h(),
+    fetchAutoRebalanceTriggeredCount24h(),
+    fetchFinalWindowBidCount24h(),
     fetchOpenAuctionFlagCount(),
     fetchMarginIncidentCount24h(),
+    fetchMarginAlertStats24h(),
     fetchVerificationUsageDistinctUsers7d(),
     getUserHealthMetrics(params)
   ]);
+  const window = toEconomicsWindow(params);
 
   return {
-    window: toEconomicsWindow(params),
+    window,
     generatedAtIso: new Date().toISOString(),
     tiers,
     portfolio,
@@ -813,20 +1006,55 @@ export async function getPackEconomicsBundle(params: WindowParams): Promise<Pack
     topAuctions,
     integrity,
     auctionSnipeMetrics,
+    auctionPriceVsMarket: {
+      window,
+      ...auctionPriceVsMarketCore
+    },
     incidentDeltaBps: ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS,
-    rateLimitHitCount24h,
+    rateLimitHitCount24h: rateLimitHitCounts24h.totalCount,
+    rateLimitHitGlobalCount24h: rateLimitHitCounts24h.globalCount,
+    autoRebalanceTriggeredCount24h,
+    finalWindowBidCount24h,
     openAuctionFlagCount,
     marginIncidentCount24h,
+    marginAlertCount24h: marginAlertStats.marginAlertCount24h,
+    recentMarginAlerts: marginAlertStats.recentMarginAlerts,
     verificationUsageDistinctUsers7d,
     userHealth
   };
 }
 
-async function fetchRateLimitHitCount24h(): Promise<number> {
+async function fetchRateLimitHitCounts24h(): Promise<{ totalCount: number; globalCount: number }> {
+  const result = await query<{ total_count: string; global_count: string }>(
+    `SELECT COUNT(*)::BIGINT AS total_count,
+            COUNT(*) FILTER (
+              WHERE COALESCE(evidence_json->>'scope', '') = 'global'
+            )::BIGINT AS global_count
+     FROM security_events
+     WHERE event_type = 'rate_limit_hit'
+       AND created_at >= now() - interval '24 hours'`
+  );
+  return {
+    totalCount: Number(result.rows[0]?.total_count ?? 0),
+    globalCount: Number(result.rows[0]?.global_count ?? 0)
+  };
+}
+
+async function fetchAutoRebalanceTriggeredCount24h(): Promise<number> {
   const result = await query<{ n: string }>(
     `SELECT COUNT(*)::BIGINT AS n
      FROM security_events
-     WHERE event_type = 'rate_limit_hit'
+     WHERE event_type = 'auto_rebalance_triggered'
+       AND created_at >= now() - interval '24 hours'`
+  );
+  return Number(result.rows[0]?.n ?? 0);
+}
+
+async function fetchFinalWindowBidCount24h(): Promise<number> {
+  const result = await query<{ n: string }>(
+    `SELECT COUNT(*)::BIGINT AS n
+     FROM security_events
+     WHERE event_type = 'final_window_bid'
        AND created_at >= now() - interval '24 hours'`
   );
   return Number(result.rows[0]?.n ?? 0);
@@ -877,6 +1105,69 @@ async function fetchMarginIncidentCount24h(): Promise<number> {
     ]
   );
   return Number(result.rows[0]?.n ?? 0);
+}
+
+function isPackTier(value: unknown): value is PackTier {
+  return typeof value === "string" && PACK_TIERS.includes(value as PackTier);
+}
+
+function isMarginAlertDirection(value: unknown): value is MarginAlertSnapshot["direction"] {
+  return value === "below_band" || value === "above_band";
+}
+
+function parseRecentMarginAlertRow(row: {
+  evidence_json: unknown;
+  created_at: Date;
+}): MarginAlertSnapshot | null {
+  if (!row.evidence_json || typeof row.evidence_json !== "object") {
+    return null;
+  }
+
+  const evidence = row.evidence_json as Record<string, unknown>;
+  const tier = evidence.tier;
+  const direction = evidence.direction;
+  const deltaBps = Number(evidence.deltaBps);
+
+  if (!isPackTier(tier) || !isMarginAlertDirection(direction) || !Number.isFinite(deltaBps)) {
+    return null;
+  }
+
+  return {
+    tier,
+    direction,
+    deltaBps: Math.trunc(deltaBps),
+    ranAtIso: new Date(row.created_at).toISOString()
+  };
+}
+
+async function fetchMarginAlertStats24h(): Promise<{
+  marginAlertCount24h: number;
+  recentMarginAlerts: MarginAlertSnapshot[];
+}> {
+  const [countResult, recentResult] = await Promise.all([
+    query<{ n: string }>(
+      `SELECT COUNT(*)::BIGINT AS n
+       FROM security_events
+       WHERE event_type = 'margin_alert'
+         AND created_at >= now() - interval '24 hours'`
+    ),
+    query<{ evidence_json: unknown; created_at: Date }>(
+      `SELECT evidence_json, created_at
+       FROM security_events
+       WHERE event_type = 'margin_alert'
+       ORDER BY created_at DESC
+       LIMIT 5`
+    )
+  ]);
+
+  const recentMarginAlerts = recentResult.rows
+    .map((row) => parseRecentMarginAlertRow(row))
+    .filter((row): row is MarginAlertSnapshot => row !== null);
+
+  return {
+    marginAlertCount24h: Number(countResult.rows[0]?.n ?? 0),
+    recentMarginAlerts
+  };
 }
 
 type WatcherMetricRow = {

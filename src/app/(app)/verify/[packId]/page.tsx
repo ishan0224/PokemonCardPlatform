@@ -1,0 +1,13 @@
+import { redirect } from "next/navigation";
+import { VerifyPackPanel } from "@/components/fairness/verify-pack-panel";
+import { routes } from "@/lib/routes";
+import { useSession } from "@/server/auth/session";
+
+export default async function VerifyPackInAppPage({ params }: { params: { packId: string } }): Promise<JSX.Element> {
+  const session = await useSession();
+  if (!session.isAuthenticated || !session.user) {
+    redirect(routes.fairness.publicVerify(params.packId));
+  }
+
+  return <VerifyPackPanel packId={params.packId} verifyIndexHref={routes.fairness.verifyIndex} />;
+}

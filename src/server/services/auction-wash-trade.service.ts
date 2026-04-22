@@ -40,7 +40,7 @@ export type WashTradeReport = {
 };
 
 const REPEAT_PAIR_MIN_COUNT = 2;
-const LONE_BIDDER_MARKET_RATIO_THRESHOLD = 0.4;
+export const LONE_BIDDER_MARKET_RATIO_THRESHOLD = 0.4;
 const RAPID_FLIP_WINDOW_HOURS = 24;
 
 async function findRepeatBuyerSellerPairs(params: WindowParams): Promise<RepeatPairFinding[]> {

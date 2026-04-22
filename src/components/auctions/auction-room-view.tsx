@@ -16,8 +16,17 @@ import { routes } from "@/lib/routes";
 
 type PendingConfirm = {
   amount: number;
-  suspiciousCeiling: number;
+  suspiciousCeiling: number | null;
+  finalWindow: {
+    windowStartedAt: string;
+    effectiveEndsAt: string;
+  } | null;
+  confirmHighBid: boolean;
+  confirmFinalWindowBid: boolean;
 };
+
+const ADVISORY_FINAL_WINDOW_PCT = 10;
+const ADVISORY_FINAL_WINDOW_MIN_SECONDS = 60;
 
 function formatRelative(value: string): string {
   const parsed = new Date(value);
@@ -49,6 +58,33 @@ function statusChip(status: string, endsAt: string): JSX.Element {
   if (status === "completed") return <Chip tone="completed">Completed</Chip>;
   if (status === "cancelled") return <Chip tone="neutral">Cancelled</Chip>;
   return <Chip tone="neutral">{status}</Chip>;
+}
+
+function computeAdvisoryFinalWindow(input: {
+  createdAt: string;
+  originalEndTime: string;
+  endsAt: string;
+}): { inFinalWindow: boolean; windowStartedAt: string } {
+  const createdAtMs = Date.parse(input.createdAt);
+  const originalEndTimeMs = Date.parse(input.originalEndTime);
+  const effectiveEndsAtMs = Date.parse(input.endsAt);
+  if (!Number.isFinite(createdAtMs) || !Number.isFinite(originalEndTimeMs) || !Number.isFinite(effectiveEndsAtMs)) {
+    return {
+      inFinalWindow: false,
+      windowStartedAt: input.endsAt
+    };
+  }
+
+  const durationMs = Math.max(0, originalEndTimeMs - createdAtMs);
+  const windowSpanMs = Math.max(
+    ADVISORY_FINAL_WINDOW_MIN_SECONDS * 1_000,
+    Math.trunc((durationMs * ADVISORY_FINAL_WINDOW_PCT) / 100)
+  );
+  const windowStartedAtMs = effectiveEndsAtMs - windowSpanMs;
+  return {
+    inFinalWindow: Date.now() >= windowStartedAtMs && Date.now() < effectiveEndsAtMs,
+    windowStartedAt: new Date(windowStartedAtMs).toISOString()
+  };
 }
 
 export function AuctionRoomView({ auctionId }: { auctionId: string }): JSX.Element {
@@ -84,19 +120,66 @@ export function AuctionRoomView({ auctionId }: { auctionId: string }): JSX.Eleme
   const isLeader = Boolean(user && auction && auction.currentBidderId === user.id);
 
   const currentBid = auction ? (auction.currentBid ?? auction.startingBid) : 0;
+  const advisoryFinalWindow = useMemo(() => {
+    if (!auction) {
+      return { inFinalWindow: false, windowStartedAt: null as string | null };
+    }
+    const resolved = computeAdvisoryFinalWindow({
+      createdAt: auction.createdAt,
+      originalEndTime: auction.originalEndTime,
+      endsAt: auction.endsAt
+    });
+    return {
+      inFinalWindow: resolved.inFinalWindow,
+      windowStartedAt: resolved.windowStartedAt
+    };
+  }, [auction]);
 
-  const submitBid = async (amount: number, confirmHighBid: boolean): Promise<void> => {
+  const submitBid = async (
+    amount: number,
+    flags?: { confirmHighBid?: boolean; confirmFinalWindowBid?: boolean }
+  ): Promise<void> => {
     setLocalError(null);
-    const outcome = await placeBid(amount, { confirmHighBid });
+    const outcome = await placeBid(amount, {
+      confirmHighBid: flags?.confirmHighBid,
+      confirmFinalWindowBid: flags?.confirmFinalWindowBid
+    });
     if (outcome.ok) {
       setPendingConfirm(null);
       return;
     }
     if (outcome.error instanceof ApiClientError) {
+      if (outcome.error.code === "FINAL_WINDOW_CONFIRMATION_REQUIRED") {
+        const windowStartedAt = outcome.error.details?.windowStartedAt;
+        const effectiveEndsAt = outcome.error.details?.effectiveEndsAt;
+        if (typeof windowStartedAt === "string" && typeof effectiveEndsAt === "string") {
+          setPendingConfirm((previous) => ({
+            amount,
+            suspiciousCeiling:
+              previous && previous.amount === amount ? previous.suspiciousCeiling : null,
+            finalWindow: {
+              windowStartedAt,
+              effectiveEndsAt
+            },
+            confirmHighBid: previous?.amount === amount ? previous.confirmHighBid : false,
+            confirmFinalWindowBid: false
+          }));
+          clearError();
+          return;
+        }
+      }
+
       if (outcome.error.code === "CONFIRMATION_REQUIRED") {
         const ceiling = Number(outcome.error.details?.suspiciousCeiling);
         if (Number.isFinite(ceiling)) {
-          setPendingConfirm({ amount, suspiciousCeiling: ceiling });
+          setPendingConfirm((previous) => ({
+            amount,
+            suspiciousCeiling: ceiling,
+            finalWindow: previous?.amount === amount ? previous.finalWindow : null,
+            confirmHighBid: false,
+            confirmFinalWindowBid:
+              previous?.amount === amount ? previous.confirmFinalWindowBid : false
+          }));
           clearError();
           return;
         }
@@ -122,7 +205,8 @@ export function AuctionRoomView({ auctionId }: { auctionId: string }): JSX.Eleme
       setLocalError(`Minimum bid is ${formatMoneyCents(auction.minNextBid)}.`);
       return;
     }
-    await submitBid(parsed, false);
+    setPendingConfirm(null);
+    await submitBid(parsed);
   };
 
   const onBump = (cents: number): void => {
@@ -132,9 +216,13 @@ export function AuctionRoomView({ auctionId }: { auctionId: string }): JSX.Eleme
     clearError();
   };
 
-  const onConfirmHighBid = async (): Promise<void> => {
+  const onConfirmBid = async (): Promise<void> => {
     if (!pendingConfirm) return;
-    await submitBid(pendingConfirm.amount, true);
+    await submitBid(pendingConfirm.amount, {
+      confirmHighBid: pendingConfirm.suspiciousCeiling !== null ? pendingConfirm.confirmHighBid : undefined,
+      confirmFinalWindowBid:
+        pendingConfirm.finalWindow !== null ? pendingConfirm.confirmFinalWindowBid : undefined
+    });
   };
 
   const extensions = useMemo((): number => {
@@ -146,6 +234,13 @@ export function AuctionRoomView({ auctionId }: { auctionId: string }): JSX.Eleme
 
   const isWinner = Boolean(user && auction && auction.status === "completed" && auction.currentBidderId === user.id);
   const winningBid = auction?.currentBid ?? auction?.startingBid ?? 0;
+  const highBidConfirmRequired = pendingConfirm?.suspiciousCeiling !== null;
+  const finalWindowConfirmRequired = pendingConfirm?.finalWindow !== null;
+  const canSubmitPendingConfirm = Boolean(
+    pendingConfirm &&
+      (!highBidConfirmRequired || pendingConfirm.confirmHighBid) &&
+      (!finalWindowConfirmRequired || pendingConfirm.confirmFinalWindowBid)
+  );
 
   const activeError = localError ?? error;
 
@@ -289,6 +384,9 @@ export function AuctionRoomView({ auctionId }: { auctionId: string }): JSX.Eleme
                         Min increment {formatMoneyCents(auction.minNextBid - currentBid)} · Balance on hold
                         during auction
                       </span>
+                      {advisoryFinalWindow.inFinalWindow ? (
+                        <span className="font-bold text-pv-warn">Final-window bidding is active</span>
+                      ) : null}
                       {isLeader ? (
                         <span className="font-bold text-pv-good">You currently lead</span>
                       ) : isSeller ? (
@@ -305,21 +403,61 @@ export function AuctionRoomView({ auctionId }: { auctionId: string }): JSX.Eleme
 
                     {pendingConfirm ? (
                       <div className="mt-3 rounded-pv-sm border border-pv-warn/28 bg-[rgba(245,158,11,0.08)] p-3">
-                        <p className="text-[13px] font-bold text-pv-warn">
-                          Confirm bid above the normal ceiling
-                        </p>
-                        <p className="mt-1 text-[12px] text-pv-warn/90">
-                          Your bid of {formatMoneyCents(pendingConfirm.amount)} exceeds the suspicious
-                          ceiling of {formatMoneyCents(pendingConfirm.suspiciousCeiling)}. Confirm only if
-                          you intended to bid this much.
-                        </p>
+                        <p className="text-[13px] font-bold text-pv-warn">Bid confirmation required</p>
+                        {highBidConfirmRequired ? (
+                          <p className="mt-1 text-[12px] text-pv-warn/90">
+                            Your bid of {formatMoneyCents(pendingConfirm.amount)} exceeds the suspicious
+                            ceiling of {formatMoneyCents(pendingConfirm.suspiciousCeiling ?? 0)}.
+                          </p>
+                        ) : null}
+                        {finalWindowConfirmRequired ? (
+                          <p className="mt-1 text-[12px] text-pv-warn/90">
+                            This bid is in the final window (started{" "}
+                            {formatRelative(pendingConfirm.finalWindow?.windowStartedAt ?? auction.endsAt)}).
+                          </p>
+                        ) : null}
+                        <div className="mt-3 space-y-2">
+                          {highBidConfirmRequired ? (
+                            <label className="flex items-start gap-2 text-[12px] text-pv-warn/95">
+                              <input
+                                type="checkbox"
+                                checked={pendingConfirm.confirmHighBid}
+                                onChange={(event) => {
+                                  const checked = event.target.checked;
+                                  setPendingConfirm((previous) =>
+                                    previous ? { ...previous, confirmHighBid: checked } : previous
+                                  );
+                                }}
+                                className="mt-0.5 h-4 w-4 rounded border-pv-warn/60 bg-transparent text-pv-warn"
+                              />
+                              <span>I confirm this high-value bid amount.</span>
+                            </label>
+                          ) : null}
+                          {finalWindowConfirmRequired ? (
+                            <label className="flex items-start gap-2 text-[12px] text-pv-warn/95">
+                              <input
+                                type="checkbox"
+                                checked={pendingConfirm.confirmFinalWindowBid}
+                                onChange={(event) => {
+                                  const checked = event.target.checked;
+                                  setPendingConfirm((previous) =>
+                                    previous ? { ...previous, confirmFinalWindowBid: checked } : previous
+                                  );
+                                }}
+                                className="mt-0.5 h-4 w-4 rounded border-pv-warn/60 bg-transparent text-pv-warn"
+                              />
+                              <span>I understand this is a final-window bid.</span>
+                            </label>
+                          ) : null}
+                        </div>
                         <div className="mt-3 flex flex-wrap items-center gap-2">
                           <Button
                             type="button"
                             variant="gold"
                             size="sm"
                             loading={bidPending}
-                            onClick={() => void onConfirmHighBid()}
+                            disabled={!canSubmitPendingConfirm || bidPending}
+                            onClick={() => void onConfirmBid()}
                           >
                             {bidPending ? "Placing…" : "Confirm and place bid"}
                           </Button>
@@ -345,10 +483,16 @@ export function AuctionRoomView({ auctionId }: { auctionId: string }): JSX.Eleme
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[12px] font-extrabold text-pv-info">Anti-snipe</span>
                   <span className="text-[12px] text-pv-muted">
-                    Bids in the last 30s extend the timer by 30s.
+                    Bids in the last 30s extend the timer by 30s. Final-window confirmations apply in
+                    the endgame.
                   </span>
                 </div>
-                <span className="text-[12px] text-pv-muted">Extensions so far: {extensions}</span>
+                <span className="text-[12px] text-pv-muted">
+                  Extensions so far: {extensions}
+                  {advisoryFinalWindow.inFinalWindow && advisoryFinalWindow.windowStartedAt
+                    ? ` · final window since ${formatRelative(advisoryFinalWindow.windowStartedAt)}`
+                    : ""}
+                </span>
               </div>
             </div>
 

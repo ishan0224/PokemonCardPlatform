@@ -61,7 +61,8 @@ export const swrKeys = {
   collection: {
     list: (input: { rarity?: string | null; state?: string | null; sort?: string; page?: number; limit?: number }) =>
       createApiKey("collection:list", input),
-    portfolio: () => createApiKey("collection:portfolio")
+    portfolio: () => createApiKey("collection:portfolio"),
+    card: (cardId: string) => createApiKey("collection:card", { cardId })
   },
   marketplace: {
     list: (input: { rarity?: string | null; sort?: string; page?: number; limit?: number }) =>

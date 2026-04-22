@@ -119,6 +119,8 @@ export type EconomicsRebalanceResult = {
   anchorSnapshotMeta: EconomicsAnchorSnapshotMeta;
 };
 
+export type EconomicsRebalanceLockMode = "wait" | "try";
+
 export type EconomicsGenerationVersionListItem = {
   id: string;
   versionNumber: number;
@@ -560,11 +562,27 @@ export async function simulateEconomicsRebalance(knobs?: EconomicsSimulateKnobs)
 export async function rebalanceEconomics(input: {
   actorUserId?: string | null;
   knobs?: EconomicsSimulateKnobs;
+  lockMode?: EconomicsRebalanceLockMode;
 }): Promise<EconomicsRebalanceResult> {
   const normalizedKnobs = normalizeKnobs(input.knobs);
+  const lockMode = input.lockMode ?? "wait";
 
   return withTransaction(async (client) => {
-    await client.query("SELECT pg_advisory_xact_lock($1)", [REBALANCE_ADVISORY_LOCK_ID]);
+    if (lockMode === "try") {
+      const lockResult = await client.query<{ acquired: boolean }>(
+        "SELECT pg_try_advisory_xact_lock($1) AS acquired",
+        [REBALANCE_ADVISORY_LOCK_ID]
+      );
+      if (!lockResult.rows[0]?.acquired) {
+        throw new EconomicsRebalanceError(
+          "Economics rebalance lock is contended.",
+          409,
+          "REBALANCE_LOCK_CONTENDED"
+        );
+      }
+    } else {
+      await client.query("SELECT pg_advisory_xact_lock($1)", [REBALANCE_ADVISORY_LOCK_ID]);
+    }
 
     const latest = await loadLatestGenerationVersionOrThrow(client);
     const priceMap = await loadPriceMapForEligibleIds(client, latest.payload.eligibleCardIdsByTier);

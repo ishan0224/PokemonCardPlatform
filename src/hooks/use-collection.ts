@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
+import { useSWRConfig } from "swr";
 import {
   apiClient,
   mapApiErrorToMessage,
@@ -11,6 +12,7 @@ import {
 import { swrKeys, useApiSWR, useApiSWRInfinite } from "@/lib/swr";
 import type { CardState, RarityTier } from "@/lib/types";
 import { useMarketplaceRoom, usePortfolioRoom } from "./use-socket";
+import { useCollectionMutations } from "./use-collection-mutations";
 import { useAuth } from "./use-auth";
 
 type CollectionPage = {
@@ -47,14 +49,15 @@ type UseCollectionInput = {
   enableRealtime?: boolean;
 };
 
+function isCollectionCardKey(key: unknown): boolean {
+  return Array.isArray(key) && key[0] === "collection:card";
+}
+
 export function useCollection(input: UseCollectionInput = {}): UseCollectionState {
-  const { user, refreshAuth } = useAuth();
+  const { user } = useAuth();
+  const { mutate: mutateCache } = useSWRConfig();
   const enabled = input.enabled ?? true;
   const limit = input.limit ?? 24;
-
-  const [listingPendingCardId, setListingPendingCardId] = useState<string | null>(null);
-  const [cancelPendingListingId, setCancelPendingListingId] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
 
   const {
     data: portfolioData,
@@ -65,7 +68,7 @@ export function useCollection(input: UseCollectionInput = {}): UseCollectionStat
     () => apiClient.getCollectionPortfolio().then((result) => result.portfolio),
     {
       shouldRetryOnError: false,
-      revalidateOnFocus: true
+      revalidateOnFocus: false
     }
   );
 
@@ -114,9 +117,12 @@ export function useCollection(input: UseCollectionInput = {}): UseCollectionStat
   const total = data?.[0]?.total ?? 0;
   const hasMore = cards.length < total;
   const loadingMore = Boolean(data) && isValidating;
+  const mutations = useCollectionMutations({
+    revalidateList: mutate,
+    revalidatePortfolio: mutatePortfolio
+  });
 
   const refresh = useCallback(async (): Promise<void> => {
-    setActionError(null);
     await Promise.all([mutate(), mutatePortfolio()]);
   }, [mutate, mutatePortfolio]);
 
@@ -128,69 +134,42 @@ export function useCollection(input: UseCollectionInput = {}): UseCollectionStat
     await setSize((current) => current + 1);
   }, [hasMore, loadingMore, setSize]);
 
-  const createListing = useCallback(
-    async (cardId: string, price: number): Promise<void> => {
-      setListingPendingCardId(cardId);
-      setActionError(null);
-
-      try {
-        await apiClient.createListing({ cardId, price });
-        await Promise.all([mutate(), mutatePortfolio(), refreshAuth()]);
-      } catch (caughtError) {
-        setActionError(mapApiErrorToMessage(caughtError) || "Failed to create listing.");
-        throw caughtError;
-      } finally {
-        setListingPendingCardId(null);
-      }
-    },
-    [mutate, mutatePortfolio, refreshAuth]
-  );
-
-  const cancelListing = useCallback(
-    async (listingId: string): Promise<void> => {
-      setCancelPendingListingId(listingId);
-      setActionError(null);
-
-      try {
-        await apiClient.cancelListing(listingId);
-        await Promise.all([mutate(), mutatePortfolio(), refreshAuth()]);
-      } catch (caughtError) {
-        setActionError(mapApiErrorToMessage(caughtError) || "Failed to cancel listing.");
-        throw caughtError;
-      } finally {
-        setCancelPendingListingId(null);
-      }
-    },
-    [mutate, mutatePortfolio, refreshAuth]
-  );
-
   useMarketplaceRoom(Boolean(input.enableRealtime && enabled), {
-    onListingCreated: () => {
+    onListingCreated: (event) => {
       void mutate();
       void mutatePortfolio();
+      void mutateCache(swrKeys.collection.card(event.cardId));
     },
-    onListingSold: () => {
+    onListingSold: (event) => {
       void mutate();
       void mutatePortfolio();
+      void mutateCache(swrKeys.collection.card(event.cardId));
     },
-    onListingCancelled: () => {
+    onListingCancelled: (event) => {
       void mutate();
       void mutatePortfolio();
+      void mutateCache(swrKeys.collection.card(event.cardId));
     },
     onConnected: () => {
       void mutate();
       void mutatePortfolio();
+      void mutateCache((key) => isCollectionCardKey(key));
     }
   });
 
   usePortfolioRoom(input.enableRealtime && enabled ? user?.id ?? null : null, {
-    onPriceUpdate: () => {
+    onPriceUpdate: (event) => {
       void mutate();
       void mutatePortfolio();
+      const affectedCardIds = new Set(event.updates.map((entry) => entry.cardId));
+      for (const cardId of affectedCardIds) {
+        void mutateCache(swrKeys.collection.card(cardId));
+      }
     },
     onConnected: () => {
       void mutate();
       void mutatePortfolio();
+      void mutateCache((key) => isCollectionCardKey(key));
     }
   });
 
@@ -201,16 +180,16 @@ export function useCollection(input: UseCollectionInput = {}): UseCollectionStat
     portfolio: portfolioData ?? null,
     loading: enabled ? isLoading && !data : false,
     loadingMore,
-    error: actionError ?? (mappedError ? mapApiErrorToMessage(mappedError) || "Failed to load collection." : null),
+    error: mutations.error ?? (mappedError ? mapApiErrorToMessage(mappedError) || "Failed to load collection." : null),
     page: size,
     limit,
     total,
     hasMore,
-    listingPendingCardId,
-    cancelPendingListingId,
+    listingPendingCardId: mutations.listingPendingCardId,
+    cancelPendingListingId: mutations.cancelPendingListingId,
     refresh,
     loadMore,
-    createListing,
-    cancelListing
+    createListing: mutations.createListing,
+    cancelListing: mutations.cancelListing
   };
 }

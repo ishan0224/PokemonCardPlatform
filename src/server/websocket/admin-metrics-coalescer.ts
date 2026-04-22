@@ -10,14 +10,24 @@ import { roomNames } from "./rooms";
 
 type AdminMetricsDeltaInput = {
   rateLimitHitCountDelta?: number;
+  rateLimitHitGlobalCountDelta?: number;
+  autoRebalanceTriggeredCountDelta?: number;
+  finalWindowBidCountDelta?: number;
   openAuctionFlagCountDelta?: number;
   marginIncidentCountDelta?: number;
+  persisted?: boolean;
 };
 
-const zeroDelta: Omit<AdminMetricsDeltaEvent, "emittedAtIso"> = {
+type CoalescedDelta = Omit<AdminMetricsDeltaEvent, "emittedAtIso">;
+
+const zeroDelta: CoalescedDelta = {
   rateLimitHitCountDelta: 0,
+  rateLimitHitGlobalCountDelta: 0,
+  autoRebalanceTriggeredCountDelta: 0,
+  finalWindowBidCountDelta: 0,
   openAuctionFlagCountDelta: 0,
-  marginIncidentCountDelta: 0
+  marginIncidentCountDelta: 0,
+  persisted: undefined
 };
 
 let pendingDelta = { ...zeroDelta };
@@ -25,16 +35,27 @@ let pendingEventCount = 0;
 let flushTimer: NodeJS.Timeout | null = null;
 let flushing = false;
 
-function normalizeDelta(input: AdminMetricsDeltaInput): Omit<AdminMetricsDeltaEvent, "emittedAtIso"> {
+function normalizeDelta(input: AdminMetricsDeltaInput): CoalescedDelta {
   return {
     rateLimitHitCountDelta: Number(input.rateLimitHitCountDelta ?? 0),
+    rateLimitHitGlobalCountDelta: Number(input.rateLimitHitGlobalCountDelta ?? 0),
+    autoRebalanceTriggeredCountDelta: Number(input.autoRebalanceTriggeredCountDelta ?? 0),
+    finalWindowBidCountDelta: Number(input.finalWindowBidCountDelta ?? 0),
     openAuctionFlagCountDelta: Number(input.openAuctionFlagCountDelta ?? 0),
-    marginIncidentCountDelta: Number(input.marginIncidentCountDelta ?? 0)
+    marginIncidentCountDelta: Number(input.marginIncidentCountDelta ?? 0),
+    persisted: input.persisted === true ? true : undefined
   };
 }
 
-function hasAnyDelta(delta: Omit<AdminMetricsDeltaEvent, "emittedAtIso">): boolean {
-  return delta.rateLimitHitCountDelta !== 0 || delta.openAuctionFlagCountDelta !== 0 || delta.marginIncidentCountDelta !== 0;
+function hasAnyDelta(delta: CoalescedDelta): boolean {
+  return (
+    delta.rateLimitHitCountDelta !== 0 ||
+    delta.rateLimitHitGlobalCountDelta !== 0 ||
+    delta.autoRebalanceTriggeredCountDelta !== 0 ||
+    delta.finalWindowBidCountDelta !== 0 ||
+    delta.openAuctionFlagCountDelta !== 0 ||
+    delta.marginIncidentCountDelta !== 0
+  );
 }
 
 function emitImmediate(io: IOServer, input: AdminMetricsDeltaInput): void {
@@ -64,8 +85,14 @@ function mergePending(input: AdminMetricsDeltaInput): void {
   const delta = normalizeDelta(input);
   pendingDelta = {
     rateLimitHitCountDelta: pendingDelta.rateLimitHitCountDelta + delta.rateLimitHitCountDelta,
+    rateLimitHitGlobalCountDelta:
+      pendingDelta.rateLimitHitGlobalCountDelta + delta.rateLimitHitGlobalCountDelta,
+    autoRebalanceTriggeredCountDelta:
+      pendingDelta.autoRebalanceTriggeredCountDelta + delta.autoRebalanceTriggeredCountDelta,
+    finalWindowBidCountDelta: pendingDelta.finalWindowBidCountDelta + delta.finalWindowBidCountDelta,
     openAuctionFlagCountDelta: pendingDelta.openAuctionFlagCountDelta + delta.openAuctionFlagCountDelta,
-    marginIncidentCountDelta: pendingDelta.marginIncidentCountDelta + delta.marginIncidentCountDelta
+    marginIncidentCountDelta: pendingDelta.marginIncidentCountDelta + delta.marginIncidentCountDelta,
+    persisted: pendingDelta.persisted === true || delta.persisted === true ? true : undefined
   };
   pendingEventCount += 1;
 }
