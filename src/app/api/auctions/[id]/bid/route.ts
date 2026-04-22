@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { type NextRequest, NextResponse } from "next/server";
 import { RATE_LIMITS } from "@/server/config/constants";
 import { ApiRouteError, getClientIp, handleRouteError, readJsonBody, requireUuid } from "@/server/http/api";
@@ -8,9 +10,14 @@ import { placeBid } from "@/server/services/auction.service";
 type PlaceBidBody = {
   amount: number;
   confirmHighBid?: boolean;
+  confirmFinalWindowBid?: boolean;
 };
 
-function validatePlaceBidBody(payload: PlaceBidBody): { amount: number; confirmHighBid: boolean } {
+function validatePlaceBidBody(payload: PlaceBidBody): {
+  amount: number;
+  confirmHighBid: boolean;
+  confirmFinalWindowBid: boolean;
+} {
   if (!payload || typeof payload !== "object") {
     throw new ApiRouteError("Body is required.", 400, "INVALID_BODY");
   }
@@ -22,10 +29,12 @@ function validatePlaceBidBody(payload: PlaceBidBody): { amount: number; confirmH
   }
 
   const confirmHighBid = payload.confirmHighBid === true;
+  const confirmFinalWindowBid = payload.confirmFinalWindowBid === true;
 
   return {
     amount: Math.trunc(amount),
-    confirmHighBid
+    confirmHighBid,
+    confirmFinalWindowBid
   };
 }
 
@@ -55,7 +64,8 @@ export async function POST(
       bidderId: authUser.userId,
       auctionId,
       amount: body.amount,
-      confirmHighBid: body.confirmHighBid
+      confirmHighBid: body.confirmHighBid,
+      confirmFinalWindowBid: body.confirmFinalWindowBid
     });
 
     return NextResponse.json(result, { status: 200 });

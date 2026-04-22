@@ -1,23 +1,30 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
-import { SiteHeader } from "@/components/ui/site-header";
-import { AuthProvider } from "@/hooks/use-auth";
+import { ClientProviders } from "@/components/providers/client-providers";
+import { useSession } from "@/server/auth/session";
+
+const inter = Inter({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-inter"
+});
 
 export const metadata: Metadata = {
   title: "PullVault | Live Collectible Drops",
   description: "Buy, open, and reveal collectible card packs in real time."
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }): Promise<JSX.Element> {
+  const session = await useSession();
+
   return (
-    <html lang="en">
-      <body className="bg-slate-100 text-slate-900 antialiased">
-        <AuthProvider>
-          <div className="min-h-screen">
-            <SiteHeader />
-            <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6">{children}</main>
-          </div>
-        </AuthProvider>
+    <html lang="en" className={inter.variable}>
+      <head>
+        <link rel="preconnect" href="https://images.pokemontcg.io" crossOrigin="" />
+      </head>
+      <body className="font-sans">
+        <ClientProviders initialSession={session.user}>{children}</ClientProviders>
       </body>
     </html>
   );

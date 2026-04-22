@@ -1,7 +1,10 @@
 import { ApiRouteError } from "../http/api";
 import { query } from "../db/pool";
+import { emitAdminMetricsDeltaFireAndForget } from "../websocket/admin-metrics-coalescer";
+import type { AuctionFlagReviewItem } from "../../lib/types";
 
 export type AuctionFlagResolution = "dismissed" | "actioned";
+export type AuctionFlagListStatus = "open" | "resolved" | "all";
 
 export type AuctionFlagRow = {
   id: string;
@@ -26,6 +29,11 @@ export type ResolveAuctionFlagInput = {
   resolution: AuctionFlagResolution;
 };
 
+export type ListAuctionFlagsInput = {
+  status?: AuctionFlagListStatus;
+  limit?: number;
+};
+
 // Phase 5 B3 auction flag workflow — source plan §475, §11 of detailed plan.
 // Auction_flags table already provisioned in Phase 0.
 
@@ -45,6 +53,31 @@ export function parseAuctionFlagResolutionBody(body: unknown): AuctionFlagResolu
     throw new ApiRouteError("Body is required.", 400, "INVALID_BODY");
   }
   return parseResolution((body as { resolution?: unknown }).resolution);
+}
+
+export function parseAuctionFlagListStatus(raw: string | null): AuctionFlagListStatus {
+  if (!raw) {
+    return "open";
+  }
+
+  if (raw === "open" || raw === "resolved" || raw === "all") {
+    return raw;
+  }
+
+  throw new ApiRouteError("status must be one of: open, resolved, all.", 400, "INVALID_STATUS");
+}
+
+export function parseAuctionFlagListLimit(raw: string | null): number {
+  if (!raw || raw.trim().length === 0) {
+    return 100;
+  }
+
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 200) {
+    throw new ApiRouteError("limit must be an integer between 1 and 200.", 400, "INVALID_LIMIT");
+  }
+
+  return parsed;
 }
 
 export function parseAuctionFlagCreateBody(body: unknown): { flagType: string; evidence: Record<string, unknown> } {
@@ -70,6 +103,41 @@ export function parseAuctionFlagCreateBody(body: unknown): { flagType: string; e
   };
 }
 
+export function mapAuctionFlagRow(row: AuctionFlagRow): AuctionFlagReviewItem {
+  return {
+    id: row.id,
+    auctionId: row.auction_id,
+    flagType: row.flag_type,
+    evidence: row.evidence_json,
+    createdAtIso: row.created_at,
+    resolvedAtIso: row.resolved_at,
+    resolvedBy: row.resolved_by,
+    resolution: row.resolution
+  };
+}
+
+export function mapAuctionFlagRowWithLegacyAliases(
+  row: AuctionFlagRow
+): AuctionFlagReviewItem & {
+  auction_id: string;
+  flag_type: string;
+  evidence_json: Record<string, unknown>;
+  created_at: string;
+  resolved_at: string | null;
+  resolved_by: string | null;
+} {
+  const mapped = mapAuctionFlagRow(row);
+  return {
+    ...mapped,
+    auction_id: row.auction_id,
+    flag_type: row.flag_type,
+    evidence_json: row.evidence_json,
+    created_at: row.created_at,
+    resolved_at: row.resolved_at,
+    resolved_by: row.resolved_by
+  };
+}
+
 export async function createAuctionFlag(input: CreateAuctionFlagInput): Promise<AuctionFlagRow> {
   const result = await query<AuctionFlagRow>(
     `INSERT INTO auction_flags (auction_id, flag_type, evidence_json)
@@ -78,7 +146,39 @@ export async function createAuctionFlag(input: CreateAuctionFlagInput): Promise<
     [input.auctionId, input.flagType, JSON.stringify(input.evidence)]
   );
 
+  emitAdminMetricsDeltaFireAndForget({ openAuctionFlagCountDelta: 1 });
   return result.rows[0];
+}
+
+export async function listAuctionFlags(input: ListAuctionFlagsInput = {}): Promise<AuctionFlagRow[]> {
+  const status = input.status ?? "open";
+  const limit = input.limit ?? 100;
+
+  let whereClause = "WHERE af.resolved_at IS NULL";
+  if (status === "resolved") {
+    whereClause = "WHERE af.resolved_at IS NOT NULL";
+  } else if (status === "all") {
+    whereClause = "";
+  }
+
+  const result = await query<AuctionFlagRow>(
+    `SELECT af.id,
+            af.auction_id,
+            af.flag_type,
+            af.evidence_json,
+            af.created_at,
+            af.resolved_at,
+            af.resolved_by,
+            af.resolution
+     FROM auction_flags af
+     ${whereClause}
+     ORDER BY CASE WHEN af.resolved_at IS NULL THEN 0 ELSE 1 END,
+              af.created_at DESC
+     LIMIT $1`,
+    [limit]
+  );
+
+  return result.rows;
 }
 
 export async function resolveAuctionFlag(input: ResolveAuctionFlagInput): Promise<AuctionFlagRow> {
@@ -97,5 +197,6 @@ export async function resolveAuctionFlag(input: ResolveAuctionFlagInput): Promis
     throw new ApiRouteError("Flag not found or already resolved.", 404, "FLAG_NOT_PENDING");
   }
 
+  emitAdminMetricsDeltaFireAndForget({ openAuctionFlagCountDelta: -1 });
   return result.rows[0];
 }

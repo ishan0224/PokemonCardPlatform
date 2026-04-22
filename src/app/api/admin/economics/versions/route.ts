@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { type NextRequest, NextResponse } from "next/server";
 import { ApiRouteError, handleRouteError } from "@/server/http/api";
 import { requireAdmin } from "@/server/middleware/admin";

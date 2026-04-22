@@ -6,6 +6,7 @@ import { query, withTransaction } from "../db/pool";
 import { emitPurchaseObservability } from "../observability/purchase-observability";
 import { getIO } from "../websocket/io";
 import { roomNames } from "../websocket/rooms";
+import { emitAdminMetricsDeltaFireAndForget } from "../websocket/admin-metrics-coalescer";
 import {
   generatePackCards,
   hydrateCardsForSlotPlan,
@@ -16,6 +17,8 @@ import { getDropInventoryCache, setDropInventoryCache } from "../redis/client";
 import { getGenerationVersionById } from "./pack-generation-version.service";
 import { buildInventoryConsumeTelemetry, resolvePurchaseRejectCode } from "./purchase-hardening.service";
 import { allocateServerSeedNonce, decryptServerSeed, lockUnrevealedServerSeed } from "./fairness.service";
+import { isPackMarginOutsideTargetBand } from "./economics.service";
+import { writeSecurityEventFireAndForget } from "./security-event.service";
 
 export type DropTierView = {
   dropPackId: string;
@@ -150,6 +153,22 @@ async function writeCachedInventory(dropId: string, tier: PackTier, remainingInv
   } catch (_error) {
     // Redis is a non-authoritative cache layer in this flow.
   }
+}
+
+export async function syncDropInventoryCacheOnPurchase(input: {
+  dropId: string;
+  tier: PackTier;
+  remainingInventory: number;
+}): Promise<void> {
+  await writeCachedInventory(input.dropId, input.tier, input.remainingInventory);
+}
+
+export async function syncDropInventoryCacheOnDropStart(dropId: string): Promise<void> {
+  await syncDropInventoryCache(dropId);
+}
+
+export async function syncDropInventoryCacheOnDropComplete(dropId: string): Promise<void> {
+  await syncDropInventoryCache(dropId);
 }
 
 type TrackedQuery = <T extends QueryResultRow = QueryResultRow>(
@@ -518,21 +537,32 @@ async function recordPackPurchaseLedger(input: {
   trackedQuery: TrackedQuery;
   userId: string;
   packId: string;
+  tier: PackTier;
   price: number;
   newBalance: number;
   packMargin: number;
-}): Promise<void> {
+}): Promise<{ marginIncidentFromRevenueInsert: boolean }> {
   await input.trackedQuery(
     `INSERT INTO transactions (user_id, type, amount, reference_id, balance_after)
      VALUES ($1, 'pack_purchase', $2, $3, $4)`,
     [input.userId, -input.price, input.packId, input.newBalance]
   );
 
-  await input.trackedQuery(
+  const revenueInsert = await input.trackedQuery<{ inserted_pack_margin: string }>(
     `INSERT INTO platform_revenue (type, amount, reference_id)
-     VALUES ('pack_margin', $1, $2)`,
+     VALUES ('pack_margin', $1, $2)
+     RETURNING amount::BIGINT AS inserted_pack_margin`,
     [input.packMargin, input.packId]
   );
+
+  const insertedPackMargin = Number(revenueInsert.rows[0]?.inserted_pack_margin ?? input.packMargin);
+  return {
+    marginIncidentFromRevenueInsert: isPackMarginOutsideTargetBand({
+      tier: input.tier,
+      priceCents: input.price,
+      packMarginCents: insertedPackMargin
+    })
+  };
 }
 
 export async function listDrops(limit = 20): Promise<DropView[]> {
@@ -551,6 +581,7 @@ export async function listDrops(limit = 20): Promise<DropView[]> {
               dp.remaining_inventory
        FROM drops d
        LEFT JOIN drop_packs dp ON dp.drop_id = d.id
+       WHERE d.status <> 'draft'
        ORDER BY CASE d.status
                   WHEN 'active' THEN 0
                   WHEN 'upcoming' THEN 1
@@ -560,6 +591,47 @@ export async function listDrops(limit = 20): Promise<DropView[]> {
                 dp.tier ASC
        LIMIT $1`,
       [normalizedLimit * 3]
+    );
+  });
+
+  const mapped = mapDropRows(result.rows);
+  return mapped.slice(0, normalizedLimit);
+}
+
+export async function listPublicDropsByStatus(statuses: DropStatus[], limit = 20): Promise<DropView[]> {
+  const normalizedLimit = Math.min(Math.max(Math.trunc(limit), 1), 100);
+  const normalizedStatuses = [...new Set(statuses)];
+
+  if (normalizedStatuses.length === 0) {
+    return [];
+  }
+
+  const result = await withTransaction(async (client) => {
+    return client.query<DropJoinedRow>(
+      `SELECT d.id AS drop_id,
+              d.scheduled_at,
+              d.status,
+              d.created_at,
+              dp.id AS drop_pack_id,
+              dp.tier,
+              dp.price,
+              dp.total_inventory,
+              dp.remaining_inventory
+       FROM drops d
+       LEFT JOIN drop_packs dp ON dp.drop_id = d.id
+       WHERE d.status::text = ANY($1::text[])
+       ORDER BY CASE d.status
+                  WHEN 'upcoming' THEN 0
+                  WHEN 'active' THEN 1
+                  WHEN 'completed' THEN 2
+                  WHEN 'cancelled' THEN 3
+                  ELSE 4
+                END,
+                CASE WHEN d.status = 'upcoming' THEN d.scheduled_at END ASC,
+                CASE WHEN d.status <> 'upcoming' THEN d.scheduled_at END DESC,
+                dp.tier ASC
+       LIMIT $2`,
+      [normalizedStatuses, normalizedLimit * 3]
     );
   });
 
@@ -582,6 +654,7 @@ export async function getDrop(dropId: string): Promise<DropView> {
        FROM drops d
        LEFT JOIN drop_packs dp ON dp.drop_id = d.id
        WHERE d.id = $1
+         AND d.status <> 'draft'
        ORDER BY dp.tier ASC`,
       [dropId]
     );
@@ -676,10 +749,11 @@ export async function purchasePack(input: {
       const totalCardValue = insertedCards.reduce((sum, card) => sum + card.acquisitionPrice, 0);
       const packMargin = purchaseContext.price - totalCardValue;
 
-      await recordPackPurchaseLedger({
+      const ledgerResult = await recordPackPurchaseLedger({
         trackedQuery,
         userId: input.userId,
         packId: packRow.packId,
+        tier: input.tier,
         price: purchaseContext.price,
         newBalance: inventoryResult.newBalance,
         packMargin
@@ -694,11 +768,16 @@ export async function purchasePack(input: {
         remainingInventory: inventoryResult.remainingInventory,
         purchasedAt: packRow.purchasedAt,
         cardsCount: insertedCards.length,
-        newBalance: inventoryResult.newBalance
-      } satisfies PurchasePackResult;
+        newBalance: inventoryResult.newBalance,
+        marginIncidentFromRevenueInsert: ledgerResult.marginIncidentFromRevenueInsert
+      };
     });
 
-    await writeCachedInventory(purchase.dropId, purchase.tier, purchase.remainingInventory);
+    await syncDropInventoryCacheOnPurchase({
+      dropId: purchase.dropId,
+      tier: purchase.tier,
+      remainingInventory: purchase.remainingInventory
+    });
 
     await maybeEmitDropEvent(purchase.dropId, "inventory_update", {
       dropId: purchase.dropId,
@@ -713,8 +792,33 @@ export async function purchasePack(input: {
       });
     }
 
+    if (purchase.marginIncidentFromRevenueInsert) {
+      writeSecurityEventFireAndForget({
+        eventType: "margin_incident",
+        userId: input.userId,
+        evidence: {
+          packId: purchase.packId,
+          dropId: purchase.dropId,
+          tier: purchase.tier,
+          pricePaid: purchase.pricePaid,
+          remainingInventory: purchase.remainingInventory
+        }
+      });
+      emitAdminMetricsDeltaFireAndForget({ marginIncidentCountDelta: 1 });
+    }
+
     observability.outcome = "success";
-    return purchase;
+    return {
+      packId: purchase.packId,
+      dropId: purchase.dropId,
+      dropPackId: purchase.dropPackId,
+      tier: purchase.tier,
+      pricePaid: purchase.pricePaid,
+      remainingInventory: purchase.remainingInventory,
+      purchasedAt: purchase.purchasedAt,
+      cardsCount: purchase.cardsCount,
+      newBalance: purchase.newBalance
+    };
   } catch (error) {
     observability.outcome = "error";
     observability.errorCode =

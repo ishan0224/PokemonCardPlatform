@@ -33,10 +33,17 @@
     "test:partb:phase4:runtime:lite": "PARTB_PHASE4_BURST_PARTICIPANT_COUNT=10 PARTB_PHASE4_MAIN_DROP_INVENTORY=3 PARTB_PHASE4_POST_WINDOW_PARTICIPANT_COUNT=3 PARTB_PHASE4_UNIFORMITY_TRIAL_COUNT=4 PARTB_PHASE4_UNIFORMITY_PARTICIPANT_COUNT=6 PARTB_PHASE4_UNIFORMITY_COHORT_SIZE=2 node --import tsx scripts/test-partb-phase4-runtime.ts",
     "test:partb:phase5:runtime": "node --import tsx scripts/test-partb-phase5-runtime.ts",
     "test:partb:phase5:runtime:lite": "PARTB_PHASE5_BIDDERS=3 PARTB_PHASE5_SOFTCLOSE_TRIALS=6 node --import tsx scripts/test-partb-phase5-runtime.ts",
+    "test:partb:phase6:runtime": "PARTB_PHASE6_RUNTIME_MODE=full node --import tsx scripts/test-partb-phase6-runtime.ts",
+    "test:partb:phase6:runtime:lite": "PARTB_PHASE6_RUNTIME_MODE=lite node --import tsx scripts/test-partb-phase6-runtime.ts",
+    "test:partb:phase7:runtime:lite": "node --import tsx scripts/test-partb-phase7-runtime.ts",
     "test:n1:unit": "node --import tsx scripts/test-n1-deterministic.ts",
     "test:n1:hardening": "node --import tsx scripts/test-n1-hardening.ts",
     "test:n1:concurrency": "node --import tsx scripts/test-n1-concurrency-smoke.ts",
     "test:n1": "npm run test:n1:unit && npm run test:n1:hardening && npm run test:n1:concurrency",
+    "a11y:axe": "node --import tsx scripts/axe-sweep.ts",
+    "perf:bundle-budgets": "node --import tsx scripts/check-frontend-budgets.ts",
+    "perf:lighthouse": "npx @lhci/cli@0.13.x autorun",
+    "test:canary:playwright": "node --import tsx scripts/playwright-canary.ts",
     "check": "npm run typecheck"
   },
   "dependencies": {
@@ -44,13 +51,16 @@
     "@supabase/supabase-js": "^2.103.3",
     "decimal.js": "^10.4.3",
     "express": "^4.21.2",
+    "framer-motion": "^12.38.0",
     "ioredis": "^5.4.1",
     "next": "^14.2.0",
     "pg": "^8.13.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-window": "^1.8.9",
     "socket.io": "^4.8.1",
-    "socket.io-client": "^4.8.3"
+    "socket.io-client": "^4.8.3",
+    "swr": "^2.4.1"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
@@ -58,6 +68,7 @@
     "@types/pg": "^8.11.10",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
+    "@types/react-window": "^1.8.8",
     "autoprefixer": "^10.4.20",
     "playwright-core": "^1.59.1",
     "postcss": "^8.5.1",

@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { type NextRequest, NextResponse } from "next/server";
 import { RATE_LIMITS } from "@/server/config/constants";
 import { getClientIp, handleRouteError, requireUuid } from "@/server/http/api";

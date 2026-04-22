@@ -1,16 +1,12 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { ApiClientError, apiClient } from "@/lib/api-client";
+import { ApiClientError, apiClient, setUnauthorizedHandler } from "@/lib/api-client";
+import type { ServerSessionUser } from "@/server/auth/session";
 import { usePortfolioRoom } from "./use-socket";
 
 type AuthState = {
-  user: {
-    id: string;
-    username: string;
-    email: string;
-    role: "user" | "admin";
-  } | null;
+  user: ServerSessionUser | null;
   balance: {
     total: number;
     held: number;
@@ -23,10 +19,15 @@ type AuthState = {
 
 const AuthContext = createContext<AuthState | null>(null);
 
-export function AuthProvider({ children }: { children: ReactNode }): JSX.Element {
-  const [user, setUser] = useState<AuthState["user"]>(null);
+type AuthProviderProps = {
+  children: ReactNode;
+  initialSession?: ServerSessionUser | null;
+};
+
+export function AuthProvider({ children, initialSession = null }: AuthProviderProps): JSX.Element {
+  const [user, setUser] = useState<AuthState["user"]>(initialSession);
   const [balance, setBalance] = useState<AuthState["balance"]>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(initialSession ? false : true);
 
   const refreshAuth = useCallback(async (): Promise<void> => {
     try {
@@ -47,6 +48,18 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   const clearAuth = useCallback((): void => {
     setUser(null);
     setBalance(null);
+  }, []);
+
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setUser(null);
+      setBalance(null);
+      setLoading(false);
+    });
+
+    return () => {
+      setUnauthorizedHandler(null);
+    };
   }, []);
 
   useEffect(() => {

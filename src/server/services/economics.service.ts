@@ -3,12 +3,15 @@ import { ApiRouteError } from "../http/api";
 import { query } from "../db/pool";
 import { PACK_TIER_CONFIGS, PACK_TIERS } from "../config/pack-tiers";
 import { getAuctionSnipeMetrics } from "./auction-snipe-metrics.service";
+import { LONE_BIDDER_MARKET_RATIO_THRESHOLD } from "./auction-wash-trade.service";
 import {
   AUCTION_FEE_BPS,
   ECONOMICS_DEFAULT_WINDOW_HOURS,
   ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS,
   ECONOMICS_MAX_WINDOW_DAYS,
   RARITY_ANCHOR_FALLBACK_CENTS,
+  REVENUE_PROJECTION_HORIZON_DAYS,
+  REVENUE_PROJECTION_WINDOW_DAYS,
   TARGET_HOUSE_EDGE_BPS,
   TRADING_FEE_BPS
 } from "../config/constants";
@@ -18,17 +21,22 @@ import type {
   HourlyRevenueBucket,
   IntegrityCheckResult,
   IntegrityChecks,
+  MarginAlertSnapshot,
   PackEconomicsBundle,
   PackTier,
   PackTierCount,
   PackTierEconomics,
   RarityTier,
+  RevenueProjection,
+  RevenueProjectionStreamKey,
   RevenueStreamBreakdown,
   RevenueStreamKey,
   TopAuction,
+  UserHealthMetrics,
   WorstPack
 } from "../../lib/types";
 import { RARITY_TIERS } from "../../lib/types";
+import { maybeFireMarginAlert } from "./margin-alert.service";
 
 const REVENUE_STREAM_KEYS: readonly RevenueStreamKey[] = [
   "pack_margin",
@@ -37,8 +45,14 @@ const REVENUE_STREAM_KEYS: readonly RevenueStreamKey[] = [
   "platform_discount",
   "manual_adjustment"
 ];
+const REVENUE_PROJECTION_STREAM_KEYS: readonly RevenueProjectionStreamKey[] = [
+  "pack_margin",
+  "trade_fee",
+  "auction_fee"
+];
 
 const FEE_MATH_EPSILON_BPS = 2;
+const REVENUE_PROJECTION_MIN_SAMPLE_TRANSACTIONS = 10;
 
 export type WindowParams = { from: Date; to: Date };
 
@@ -114,6 +128,27 @@ function bpsFromRatio(numerator: number, denominator: number): number {
 
 function absBps(value: number): number {
   return Math.abs(value);
+}
+
+function roundMetric(value: number, fractionDigits = 4): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Number(value.toFixed(fractionDigits));
+}
+
+export function isPackMarginOutsideTargetBand(input: {
+  tier: PackTier;
+  priceCents: number;
+  packMarginCents: number;
+}): boolean {
+  if (input.priceCents <= 0) {
+    return false;
+  }
+
+  const actualHouseEdgeBps = (input.packMarginCents * 10_000) / input.priceCents;
+  const targetHouseEdgeBps = TARGET_HOUSE_EDGE_BPS[input.tier];
+  return Math.abs(actualHouseEdgeBps - targetHouseEdgeBps) > ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS;
 }
 
 async function fetchRevenueByStream(params: WindowParams): Promise<{
@@ -294,19 +329,119 @@ async function fetchHourlySeries(params: WindowParams): Promise<HourlyRevenueBuc
   return Array.from(buckets.values()).sort((a, b) => a.hourIso.localeCompare(b.hourIso));
 }
 
+type RevenueProjectionSource = {
+  totalByStream: Record<RevenueProjectionStreamKey, number>;
+  transactionCount: number;
+};
+
+async function fetchRevenueProjectionSource(windowDays: number): Promise<RevenueProjectionSource> {
+  const now = new Date();
+  const from = new Date(now.getTime() - windowDays * 24 * 60 * 60 * 1000);
+
+  const [streamResult, transactionResult] = await Promise.all([
+    query<{ type: RevenueProjectionStreamKey; total: string }>(
+      `SELECT type, COALESCE(SUM(amount), 0)::BIGINT AS total
+       FROM platform_revenue
+       WHERE type IN ('pack_margin', 'trade_fee', 'auction_fee')
+         AND created_at >= $1
+         AND created_at < $2
+       GROUP BY type`,
+      [from, now]
+    ),
+    query<{ n: string }>(
+      `SELECT COUNT(*)::BIGINT AS n
+       FROM transactions
+       WHERE type IN ('pack_purchase', 'trade_buy', 'auction_win')
+         AND created_at >= $1
+         AND created_at < $2`,
+      [from, now]
+    )
+  ]);
+
+  const totalByStream: Record<RevenueProjectionStreamKey, number> = {
+    pack_margin: 0,
+    trade_fee: 0,
+    auction_fee: 0
+  };
+  for (const row of streamResult.rows) {
+    totalByStream[row.type] = Number(row.total);
+  }
+
+  return {
+    totalByStream,
+    transactionCount: Number(transactionResult.rows[0]?.n ?? 0)
+  };
+}
+
+function computeRevenueProjection(
+  source: RevenueProjectionSource,
+  options: { windowDays: number; horizonDays: number }
+): RevenueProjection {
+  const windowDays = Math.max(Math.trunc(options.windowDays), 1);
+  const horizonDays = Math.max(Math.trunc(options.horizonDays), 1);
+  const insufficientSample = source.transactionCount < REVENUE_PROJECTION_MIN_SAMPLE_TRANSACTIONS;
+
+  const perStream = {
+    pack_margin: {
+      historicalDaily: 0,
+      projectedHorizon: 0,
+      method: "linear_extrapolation"
+    },
+    trade_fee: {
+      historicalDaily: 0,
+      projectedHorizon: 0,
+      method: "linear_extrapolation"
+    },
+    auction_fee: {
+      historicalDaily: 0,
+      projectedHorizon: 0,
+      method: "linear_extrapolation"
+    }
+  } satisfies RevenueProjection["perStream"];
+
+  if (!insufficientSample) {
+    for (const stream of REVENUE_PROJECTION_STREAM_KEYS) {
+      const daily = new Decimal(source.totalByStream[stream])
+        .div(windowDays)
+        .toDecimalPlaces(0, Decimal.ROUND_HALF_UP)
+        .toNumber();
+      perStream[stream].historicalDaily = daily;
+      perStream[stream].projectedHorizon = daily * horizonDays;
+    }
+  }
+
+  const totalProjectedHorizon = REVENUE_PROJECTION_STREAM_KEYS.reduce(
+    (acc, stream) => acc + perStream[stream].projectedHorizon,
+    0
+  );
+
+  return {
+    windowDays,
+    horizonDays,
+    perStream,
+    totalProjectedHorizon
+  };
+}
+
 export async function getEconomicsSummary(params: WindowParams): Promise<EconomicsSummary> {
-  const [revenue, gmv, packs, trades, auctionStats, hourly] = await Promise.all([
+  const [revenue, gmv, packs, trades, auctionStats, hourly, marginAlertStats, projectionSource] = await Promise.all([
     fetchRevenueByStream(params),
     fetchGmvBreakdown(params),
     fetchPacksByTier(params),
     fetchTradesExecuted(params),
     fetchAuctionStats(params),
-    fetchHourlySeries(params)
+    fetchHourlySeries(params),
+    fetchMarginAlertStats24h(),
+    fetchRevenueProjectionSource(REVENUE_PROJECTION_WINDOW_DAYS)
   ]);
 
   const gmvTotal = gmv.packCents + gmv.tradeCents + gmv.auctionCents;
   const netRevenue = revenue.breakdown.reduce((acc, entry) => acc + entry.totalCents, 0);
   const takeRateBps = bpsFromRatio(netRevenue, gmvTotal);
+  const revenueProjection = computeRevenueProjection(projectionSource, {
+    windowDays: REVENUE_PROJECTION_WINDOW_DAYS,
+    horizonDays: REVENUE_PROJECTION_HORIZON_DAYS
+  });
 
   return {
     window: toEconomicsWindow(params),
@@ -327,7 +462,10 @@ export async function getEconomicsSummary(params: WindowParams): Promise<Economi
     auctionAverageWinningBidCents: auctionStats.avgBidCents,
     auctionMaxWinningBidCents: auctionStats.maxBidCents,
     platformRevenueRowCount: revenue.rowCount,
-    transactionRowCount: gmv.transactionRowCount
+    transactionRowCount: gmv.transactionRowCount,
+    revenueProjection,
+    marginAlertCount24h: marginAlertStats.marginAlertCount24h,
+    recentMarginAlerts: marginAlertStats.recentMarginAlerts
   };
 }
 
@@ -410,6 +548,7 @@ export async function getPackEconomics(params: WindowParams): Promise<{
 }> {
   const [marginByTier, anchorResult] = await Promise.all([fetchPerTierMargin(params), fetchRarityAnchors()]);
   const { anchors, sourceByRarity } = anchorResult;
+  const windowSeconds = Math.max(Math.trunc((params.to.getTime() - params.from.getTime()) / 1_000), 1);
 
   const tiers: PackTierEconomics[] = PACK_TIERS.map((tier) => {
     const config = PACK_TIER_CONFIGS[tier];
@@ -454,6 +593,24 @@ export async function getPackEconomics(params: WindowParams): Promise<{
     const packsPurchased = Number(row.packs_purchased);
     const actualEv = Number(row.avg_realized_ev);
     const actualEdgeBps = bpsFromRatio(priceCents - actualEv, priceCents);
+    const targetHouseEdgeBps = TARGET_HOUSE_EDGE_BPS[tier];
+    const deltaHouseEdgeBps = actualEdgeBps - targetHouseEdgeBps;
+
+    if (Math.abs(deltaHouseEdgeBps) > ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS) {
+      const direction = deltaHouseEdgeBps < 0 ? "below_band" : "above_band";
+      void maybeFireMarginAlert({
+        tier,
+        direction,
+        targetEdgeBps: targetHouseEdgeBps,
+        observedEdgeBps: actualEdgeBps,
+        deltaBps: deltaHouseEdgeBps,
+        sampleSize: packsPurchased,
+        windowSeconds
+      }).catch((error) => {
+        const typed = error as { message?: string };
+        console.warn(`[economics] margin alert dispatch failed for ${tier}: ${typed.message ?? "unknown error"}`);
+      });
+    }
 
     return {
       tier,
@@ -468,7 +625,7 @@ export async function getPackEconomics(params: WindowParams): Promise<{
       sigmaMarginCents: Number(row.sigma_margin),
       bestMarginCents: Number(row.best_margin),
       worstMarginCents: Number(row.worst_margin),
-      targetHouseEdgeBps: TARGET_HOUSE_EDGE_BPS[tier],
+      targetHouseEdgeBps,
       anchorSource,
       anchorFallbackRarities: fallbackRarities.length > 0 ? fallbackRarities : undefined
     };
@@ -596,6 +753,55 @@ export async function getTopAuctions(params: WindowParams, limit = 5): Promise<T
     cardName: row.card_name,
     cardImageUrl: row.card_image_url
   }));
+}
+
+type AuctionPriceVsMarketMetricsCore = Omit<PackEconomicsBundle["auctionPriceVsMarket"], "window">;
+
+async function getAuctionPriceVsMarketMetrics(params: WindowParams): Promise<AuctionPriceVsMarketMetricsCore> {
+  const result = await query<{
+    sample_size: string;
+    mean_ratio: string;
+    p10: string;
+    p50: string;
+    p90: string;
+    low_ratio_count: string;
+    high_ratio_count: string;
+  }>(
+    `WITH ratios AS (
+       SELECT (a.current_bid::numeric / pc.current_price::numeric) AS ratio
+       FROM auctions a
+       JOIN cards c ON c.id = a.card_id
+       JOIN pokemon_cards pc ON pc.id = c.pokemon_card_id
+       WHERE a.status = 'completed'
+         AND a.current_bid IS NOT NULL
+         AND a.ends_at >= $1
+         AND a.ends_at < $2
+         AND pc.current_price > 0
+     )
+     SELECT COUNT(*)::BIGINT AS sample_size,
+            COALESCE(AVG(ratio), 0)::TEXT AS mean_ratio,
+            COALESCE(PERCENTILE_CONT(0.1) WITHIN GROUP (ORDER BY ratio), 0)::TEXT AS p10,
+            COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ratio), 0)::TEXT AS p50,
+            COALESCE(PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY ratio), 0)::TEXT AS p90,
+            COALESCE(SUM(CASE WHEN ratio < $3::numeric THEN 1 ELSE 0 END), 0)::BIGINT AS low_ratio_count,
+            COALESCE(SUM(CASE WHEN ratio > 2::numeric THEN 1 ELSE 0 END), 0)::BIGINT AS high_ratio_count
+     FROM ratios`,
+    [params.from, params.to, LONE_BIDDER_MARKET_RATIO_THRESHOLD]
+  );
+
+  const row = result.rows[0];
+  const p50 = roundMetric(Number(row?.p50 ?? 0));
+
+  return {
+    sampleSize: Number(row?.sample_size ?? 0),
+    medianRatio: p50,
+    meanRatio: roundMetric(Number(row?.mean_ratio ?? 0)),
+    p10: roundMetric(Number(row?.p10 ?? 0)),
+    p50,
+    p90: roundMetric(Number(row?.p90 ?? 0)),
+    lowRatioCount: Number(row?.low_ratio_count ?? 0),
+    highRatioCount: Number(row?.high_ratio_count ?? 0)
+  };
 }
 
 async function checkFeeMath(params: WindowParams): Promise<{
@@ -760,56 +966,418 @@ export async function getIntegrityChecks(
 
 export async function getPackEconomicsBundle(params: WindowParams): Promise<PackEconomicsBundle> {
   const { tiers, portfolio } = await getPackEconomics(params);
-  const [worstPacks, topAuctions, integrity, auctionSnipeMetrics] = await Promise.all([
+  const [
+    worstPacks,
+    topAuctions,
+    integrity,
+    auctionSnipeMetrics,
+    auctionPriceVsMarketCore,
+    rateLimitHitCounts24h,
+    autoRebalanceTriggeredCount24h,
+    finalWindowBidCount24h,
+    openAuctionFlagCount,
+    marginIncidentCount24h,
+    marginAlertStats,
+    verificationUsageDistinctUsers7d,
+    userHealth
+  ] = await Promise.all([
     getWorstPacks(params),
     getTopAuctions(params),
     getIntegrityChecks(params, tiers),
-    getAuctionSnipeMetrics(params)
+    getAuctionSnipeMetrics(params),
+    getAuctionPriceVsMarketMetrics(params),
+    fetchRateLimitHitCounts24h(),
+    fetchAutoRebalanceTriggeredCount24h(),
+    fetchFinalWindowBidCount24h(),
+    fetchOpenAuctionFlagCount(),
+    fetchMarginIncidentCount24h(),
+    fetchMarginAlertStats24h(),
+    fetchVerificationUsageDistinctUsers7d(),
+    getUserHealthMetrics(params)
   ]);
+  const window = toEconomicsWindow(params);
 
   return {
-    window: toEconomicsWindow(params),
+    window,
     generatedAtIso: new Date().toISOString(),
     tiers,
     portfolio,
     worstPacks,
     topAuctions,
     integrity,
-    auctionSnipeMetrics
+    auctionSnipeMetrics,
+    auctionPriceVsMarket: {
+      window,
+      ...auctionPriceVsMarketCore
+    },
+    incidentDeltaBps: ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS,
+    rateLimitHitCount24h: rateLimitHitCounts24h.totalCount,
+    rateLimitHitGlobalCount24h: rateLimitHitCounts24h.globalCount,
+    autoRebalanceTriggeredCount24h,
+    finalWindowBidCount24h,
+    openAuctionFlagCount,
+    marginIncidentCount24h,
+    marginAlertCount24h: marginAlertStats.marginAlertCount24h,
+    recentMarginAlerts: marginAlertStats.recentMarginAlerts,
+    verificationUsageDistinctUsers7d,
+    userHealth
   };
 }
 
-export function buildMarginIncidentEvidence(bundle: PackEconomicsBundle): Record<string, unknown> | null {
-  const outOfBandTiers = bundle.tiers
-    .map((tier) => {
-      if (tier.actualHouseEdgeBps === null) {
-        return null;
-      }
+async function fetchRateLimitHitCounts24h(): Promise<{ totalCount: number; globalCount: number }> {
+  const result = await query<{ total_count: string; global_count: string }>(
+    `SELECT COUNT(*)::BIGINT AS total_count,
+            COUNT(*) FILTER (
+              WHERE COALESCE(evidence_json->>'scope', '') = 'global'
+            )::BIGINT AS global_count
+     FROM security_events
+     WHERE event_type = 'rate_limit_hit'
+       AND created_at >= now() - interval '24 hours'`
+  );
+  return {
+    totalCount: Number(result.rows[0]?.total_count ?? 0),
+    globalCount: Number(result.rows[0]?.global_count ?? 0)
+  };
+}
 
-      const deltaBps = Math.abs(tier.actualHouseEdgeBps - tier.targetHouseEdgeBps);
-      if (deltaBps <= ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS) {
-        return null;
-      }
+async function fetchAutoRebalanceTriggeredCount24h(): Promise<number> {
+  const result = await query<{ n: string }>(
+    `SELECT COUNT(*)::BIGINT AS n
+     FROM security_events
+     WHERE event_type = 'auto_rebalance_triggered'
+       AND created_at >= now() - interval '24 hours'`
+  );
+  return Number(result.rows[0]?.n ?? 0);
+}
 
-      return {
-        tier: tier.tier,
-        actualHouseEdgeBps: tier.actualHouseEdgeBps,
-        targetHouseEdgeBps: tier.targetHouseEdgeBps,
-        deltaBps,
-        packsPurchased: tier.packsPurchased,
-        sigmaMarginCents: tier.sigmaMarginCents
-      };
-    })
-    .filter((tier): tier is NonNullable<typeof tier> => tier !== null);
+async function fetchFinalWindowBidCount24h(): Promise<number> {
+  const result = await query<{ n: string }>(
+    `SELECT COUNT(*)::BIGINT AS n
+     FROM security_events
+     WHERE event_type = 'final_window_bid'
+       AND created_at >= now() - interval '24 hours'`
+  );
+  return Number(result.rows[0]?.n ?? 0);
+}
 
-  if (bundle.integrity.tiersLosingMoneyCount === 0 && outOfBandTiers.length === 0) {
+async function fetchOpenAuctionFlagCount(): Promise<number> {
+  const result = await query<{ n: string }>(
+    `SELECT COUNT(*)::BIGINT AS n
+     FROM auction_flags
+     WHERE resolved_at IS NULL`
+  );
+  return Number(result.rows[0]?.n ?? 0);
+}
+
+async function fetchVerificationUsageDistinctUsers7d(): Promise<number> {
+  const result = await query<{ n: string }>(
+    `SELECT COUNT(DISTINCT user_id)::BIGINT AS n
+     FROM security_events
+     WHERE event_type = 'fairness_verification_run'
+       AND user_id IS NOT NULL
+       AND created_at >= now() - interval '7 days'`
+  );
+  return Number(result.rows[0]?.n ?? 0);
+}
+
+async function fetchMarginIncidentCount24h(): Promise<number> {
+  const result = await query<{ n: string }>(
+    `SELECT COUNT(*)::BIGINT AS n
+     FROM platform_revenue pr
+     JOIN packs p ON p.id = pr.reference_id
+     WHERE pr.type = 'pack_margin'
+       AND pr.created_at >= now() - interval '24 hours'
+       AND p.price_paid > 0
+       AND ABS(
+         ((pr.amount::numeric * 10000.0) / p.price_paid::numeric)
+         - (CASE p.tier
+             WHEN 'standard' THEN $1::numeric
+             WHEN 'premium' THEN $2::numeric
+             WHEN 'elite' THEN $3::numeric
+             ELSE 0::numeric
+            END)
+       ) > $4::numeric`,
+    [
+      TARGET_HOUSE_EDGE_BPS.standard,
+      TARGET_HOUSE_EDGE_BPS.premium,
+      TARGET_HOUSE_EDGE_BPS.elite,
+      ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS
+    ]
+  );
+  return Number(result.rows[0]?.n ?? 0);
+}
+
+function isPackTier(value: unknown): value is PackTier {
+  return typeof value === "string" && PACK_TIERS.includes(value as PackTier);
+}
+
+function isMarginAlertDirection(value: unknown): value is MarginAlertSnapshot["direction"] {
+  return value === "below_band" || value === "above_band";
+}
+
+function parseRecentMarginAlertRow(row: {
+  evidence_json: unknown;
+  created_at: Date;
+}): MarginAlertSnapshot | null {
+  if (!row.evidence_json || typeof row.evidence_json !== "object") {
+    return null;
+  }
+
+  const evidence = row.evidence_json as Record<string, unknown>;
+  const tier = evidence.tier;
+  const direction = evidence.direction;
+  const deltaBps = Number(evidence.deltaBps);
+
+  if (!isPackTier(tier) || !isMarginAlertDirection(direction) || !Number.isFinite(deltaBps)) {
     return null;
   }
 
   return {
-    incidentDeltaBps: ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS,
-    tiersLosingMoneyCount: bundle.integrity.tiersLosingMoneyCount,
-    outOfBandTiers,
-    window: bundle.window
+    tier,
+    direction,
+    deltaBps: Math.trunc(deltaBps),
+    ranAtIso: new Date(row.created_at).toISOString()
+  };
+}
+
+async function fetchMarginAlertStats24h(): Promise<{
+  marginAlertCount24h: number;
+  recentMarginAlerts: MarginAlertSnapshot[];
+}> {
+  const [countResult, recentResult] = await Promise.all([
+    query<{ n: string }>(
+      `SELECT COUNT(*)::BIGINT AS n
+       FROM security_events
+       WHERE event_type = 'margin_alert'
+         AND created_at >= now() - interval '24 hours'`
+    ),
+    query<{ evidence_json: unknown; created_at: Date }>(
+      `SELECT evidence_json, created_at
+       FROM security_events
+       WHERE event_type = 'margin_alert'
+       ORDER BY created_at DESC
+       LIMIT 5`
+    )
+  ]);
+
+  const recentMarginAlerts = recentResult.rows
+    .map((row) => parseRecentMarginAlertRow(row))
+    .filter((row): row is MarginAlertSnapshot => row !== null);
+
+  return {
+    marginAlertCount24h: Number(countResult.rows[0]?.n ?? 0),
+    recentMarginAlerts
+  };
+}
+
+type WatcherMetricRow = {
+  watcher_count_avg: string | null;
+  sample_count: string;
+};
+
+async function fetchWatcherMetricRow(params: WindowParams): Promise<WatcherMetricRow> {
+  try {
+    const result = await query<WatcherMetricRow>(
+      `SELECT AVG(observed_count)::numeric(20,4) AS watcher_count_avg,
+              COUNT(*)::BIGINT AS sample_count
+       FROM auction_watcher_samples
+       WHERE sampled_at >= $1
+         AND sampled_at < $2`,
+      [params.from, params.to]
+    );
+    return result.rows[0] ?? { watcher_count_avg: null, sample_count: "0" };
+  } catch (error) {
+    const typed = error as { code?: string; message?: string };
+    if (typed.code === "42P01") {
+      console.warn(
+        `[economics] watcher telemetry unavailable (auction_watcher_samples missing): ${typed.message ?? "unknown error"}`
+      );
+      return { watcher_count_avg: null, sample_count: "0" };
+    }
+    throw error;
+  }
+}
+
+async function getUserHealthMetrics(params: WindowParams): Promise<UserHealthMetrics> {
+  const [
+    dropEngagementResult,
+    selloutResult,
+    dropfillResult,
+    auctionResult,
+    watcherResult,
+    retentionResult
+  ] = await Promise.all([
+    query<{ purchases: string; buyers: string }>(
+      `SELECT COUNT(*)::BIGINT AS purchases,
+              COUNT(DISTINCT user_id)::BIGINT AS buyers
+       FROM packs
+       WHERE purchased_at >= $1
+         AND purchased_at < $2`,
+      [params.from, params.to]
+    ),
+    query<{ avg_sellout_seconds: string | null }>(
+      `WITH sold_out_drops AS (
+         SELECT dp.drop_id
+         FROM drop_packs dp
+         GROUP BY dp.drop_id
+         HAVING SUM(dp.remaining_inventory) = 0
+       ),
+       sold_out_timeline AS (
+         SELECT sod.drop_id,
+                MIN(p.purchased_at) AS first_purchased_at,
+                MAX(p.purchased_at) AS last_purchased_at
+         FROM sold_out_drops sod
+         JOIN drop_packs dp ON dp.drop_id = sod.drop_id
+         JOIN packs p ON p.drop_pack_id = dp.id
+         WHERE p.purchased_at >= $1
+           AND p.purchased_at < $2
+         GROUP BY sod.drop_id
+       )
+       SELECT AVG(EXTRACT(EPOCH FROM (last_purchased_at - first_purchased_at)))::numeric(20,4) AS avg_sellout_seconds
+       FROM sold_out_timeline`,
+      [params.from, params.to]
+    ),
+    query<{ lt25: string; gte25lt50: string; gte50lt75: string; gte75: string }>(
+      `WITH window_drops AS (
+         SELECT DISTINCT dp.drop_id
+         FROM packs p
+         JOIN drop_packs dp ON dp.id = p.drop_pack_id
+         WHERE p.purchased_at >= $1
+           AND p.purchased_at < $2
+       ),
+       fill AS (
+         SELECT wd.drop_id,
+                SUM(dp.total_inventory)::numeric AS total_inventory,
+                SUM(dp.total_inventory - dp.remaining_inventory)::numeric AS sold_inventory
+         FROM window_drops wd
+         JOIN drop_packs dp ON dp.drop_id = wd.drop_id
+         GROUP BY wd.drop_id
+       )
+       SELECT
+         COALESCE(SUM(CASE
+           WHEN total_inventory = 0 THEN 0
+           WHEN (sold_inventory / total_inventory) < 0.25 THEN 1
+           ELSE 0
+         END), 0)::BIGINT AS lt25,
+         COALESCE(SUM(CASE
+           WHEN total_inventory = 0 THEN 0
+           WHEN (sold_inventory / total_inventory) >= 0.25
+            AND (sold_inventory / total_inventory) < 0.5 THEN 1
+           ELSE 0
+         END), 0)::BIGINT AS gte25lt50,
+         COALESCE(SUM(CASE
+           WHEN total_inventory = 0 THEN 0
+           WHEN (sold_inventory / total_inventory) >= 0.5
+            AND (sold_inventory / total_inventory) < 0.75 THEN 1
+           ELSE 0
+         END), 0)::BIGINT AS gte50lt75,
+         COALESCE(SUM(CASE
+           WHEN total_inventory = 0 THEN 0
+           WHEN (sold_inventory / total_inventory) >= 0.75 THEN 1
+           ELSE 0
+         END), 0)::BIGINT AS gte75
+       FROM fill`,
+      [params.from, params.to]
+    ),
+    query<{ bids_per_auction_avg: string; unique_bidders_per_auction_avg: string }>(
+      `WITH per_auction AS (
+         SELECT b.auction_id,
+                COUNT(*)::numeric AS bid_count,
+                COUNT(DISTINCT b.bidder_id)::numeric AS unique_bidder_count
+         FROM bids b
+         WHERE b.created_at >= $1
+           AND b.created_at < $2
+         GROUP BY b.auction_id
+       )
+       SELECT COALESCE(AVG(bid_count), 0)::numeric(20,4) AS bids_per_auction_avg,
+              COALESCE(AVG(unique_bidder_count), 0)::numeric(20,4) AS unique_bidders_per_auction_avg
+       FROM per_auction`,
+      [params.from, params.to]
+    ),
+    fetchWatcherMetricRow(params),
+    query<{ cohort_buyers: string; d1_returning_buyers: string; d7_returning_buyers: string }>(
+      `WITH buyer_tx AS (
+         SELECT user_id, created_at
+         FROM transactions
+         WHERE type IN ('pack_purchase', 'trade_buy', 'auction_win')
+       ),
+       first_buyer_tx AS (
+         SELECT user_id, MIN(created_at) AS first_buyer_at
+         FROM buyer_tx
+         GROUP BY user_id
+       ),
+       cohort AS (
+         SELECT user_id, first_buyer_at
+         FROM first_buyer_tx
+         WHERE first_buyer_at >= $1
+           AND first_buyer_at < $2
+       ),
+       returns AS (
+         SELECT c.user_id,
+                EXISTS (
+                  SELECT 1
+                  FROM buyer_tx bt
+                  WHERE bt.user_id = c.user_id
+                    AND bt.created_at >= c.first_buyer_at + interval '1 day'
+                    AND bt.created_at < c.first_buyer_at + interval '2 days'
+                ) AS d1_returned,
+                EXISTS (
+                  SELECT 1
+                  FROM buyer_tx bt
+                  WHERE bt.user_id = c.user_id
+                    AND bt.created_at >= c.first_buyer_at + interval '7 days'
+                    AND bt.created_at < c.first_buyer_at + interval '8 days'
+                ) AS d7_returned
+         FROM cohort c
+       )
+       SELECT COUNT(*)::BIGINT AS cohort_buyers,
+              COALESCE(SUM(CASE WHEN d1_returned THEN 1 ELSE 0 END), 0)::BIGINT AS d1_returning_buyers,
+              COALESCE(SUM(CASE WHEN d7_returned THEN 1 ELSE 0 END), 0)::BIGINT AS d7_returning_buyers
+       FROM returns`,
+      [params.from, params.to]
+    )
+  ]);
+
+  const purchases = Number(dropEngagementResult.rows[0]?.purchases ?? 0);
+  const buyers = Number(dropEngagementResult.rows[0]?.buyers ?? 0);
+  const purchasesPerUserAvg = buyers > 0 ? purchases / buyers : 0;
+
+  const fill = dropfillResult.rows[0];
+  const auction = auctionResult.rows[0];
+  const watcher = watcherResult;
+  const retention = retentionResult.rows[0];
+
+  const cohortBuyerCount = Number(retention?.cohort_buyers ?? 0);
+  const d1ReturningBuyerCount = Number(retention?.d1_returning_buyers ?? 0);
+  const d7ReturningBuyerCount = Number(retention?.d7_returning_buyers ?? 0);
+
+  return {
+    dropEngagement: {
+      purchasesPerUserAvg: roundMetric(purchasesPerUserAvg),
+      selloutTimeAvgSeconds: selloutResult.rows[0]?.avg_sellout_seconds
+        ? roundMetric(Number(selloutResult.rows[0].avg_sellout_seconds), 2)
+        : null,
+      dropfillDistribution: {
+        lt25: Number(fill?.lt25 ?? 0),
+        gte25Lt50: Number(fill?.gte25lt50 ?? 0),
+        gte50Lt75: Number(fill?.gte50lt75 ?? 0),
+        gte75: Number(fill?.gte75 ?? 0)
+      }
+    },
+    auctionParticipation: {
+      bidsPerAuctionAvg: roundMetric(Number(auction?.bids_per_auction_avg ?? 0)),
+      uniqueBiddersPerAuctionAvg: roundMetric(Number(auction?.unique_bidders_per_auction_avg ?? 0)),
+      watcherCountAvg: watcher?.watcher_count_avg !== null && watcher?.watcher_count_avg !== undefined
+        ? roundMetric(Number(watcher.watcher_count_avg))
+        : null,
+      watcherCountMetricSource: Number(watcher?.sample_count ?? 0) > 0 ? "auction_watcher_samples" : "not_collected"
+    },
+    retention: {
+      cohortBuyerCount,
+      d1ReturningBuyerCount,
+      d7ReturningBuyerCount,
+      d1Rate: cohortBuyerCount > 0 ? roundMetric(d1ReturningBuyerCount / cohortBuyerCount) : 0,
+      d7Rate: cohortBuyerCount > 0 ? roundMetric(d7ReturningBuyerCount / cohortBuyerCount) : 0
+    }
   };
 }

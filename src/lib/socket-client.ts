@@ -2,6 +2,7 @@
 
 import { io, type Socket } from "socket.io-client";
 import type { PackTier } from "./types";
+import type { AdminMetricsDeltaEvent } from "./types";
 import { PRICE_UPDATE_EVENT } from "./realtime/price-update";
 import type { PriceUpdateEntry, PriceUpdateEvent } from "./realtime/price-update";
 export type PriceUpdatePatch = PriceUpdateEntry;
@@ -80,6 +81,8 @@ export type BalanceUpdateEvent = {
   referenceId?: string;
 };
 
+export type AdminMetricsDeltaRoomEvent = AdminMetricsDeltaEvent;
+
 export type DropRoomHandlers = {
   onInventoryUpdate?: (event: DropInventoryUpdateEvent) => void;
   onSoldOut?: (event: DropInventoryUpdateEvent) => void;
@@ -116,6 +119,11 @@ export type PortfolioRoomHandlers = {
   onConnected?: () => void;
 };
 
+export type AdminMetricsRoomHandlers = {
+  onMetricsDelta?: (event: AdminMetricsDeltaRoomEvent) => void;
+  onConnected?: () => void;
+};
+
 let socketInstance: Socket | null = null;
 let activeSubscriptions = 0;
 
@@ -145,6 +153,10 @@ function auctionsRoomName(): string {
 
 function portfolioRoomName(userId: string): string {
   return `portfolio:${userId}`;
+}
+
+function adminMetricsRoomName(): string {
+  return "admin:metrics";
 }
 
 function getSocket(): Socket {
@@ -413,6 +425,41 @@ export function subscribeToPortfolioRoom(userId: string, handlers: PortfolioRoom
     socket.off("connect", onConnected);
     socket.off("balance_update", onBalanceUpdate);
     socket.off(PRICE_UPDATE_EVENT, onPriceUpdate);
+    socket.emit("leave-room", room);
+
+    if (activeSubscriptions === 0 && socket.connected) {
+      socket.disconnect();
+    }
+  };
+}
+
+export function subscribeToAdminMetricsRoom(handlers: AdminMetricsRoomHandlers): () => void {
+  const socket = getSocket();
+  const room = adminMetricsRoomName();
+
+  const onMetricsDelta = (event: AdminMetricsDeltaRoomEvent): void => {
+    handlers.onMetricsDelta?.(event);
+  };
+
+  const onConnected = (): void => {
+    handlers.onConnected?.();
+    socket.emit("join-room", room);
+  };
+
+  if (!socket.connected) {
+    socket.connect();
+  }
+
+  activeSubscriptions += 1;
+  socket.on("connect", onConnected);
+  socket.on("admin_metrics_delta", onMetricsDelta);
+  socket.emit("join-room", room);
+
+  return () => {
+    activeSubscriptions = Math.max(activeSubscriptions - 1, 0);
+
+    socket.off("connect", onConnected);
+    socket.off("admin_metrics_delta", onMetricsDelta);
     socket.emit("leave-room", room);
 
     if (activeSubscriptions === 0 && socket.connected) {

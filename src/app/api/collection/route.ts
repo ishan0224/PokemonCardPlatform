@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { type NextRequest, NextResponse } from "next/server";
 import type { CardState, RarityTier } from "@/lib/types";
 import { ApiRouteError, handleRouteError } from "@/server/http/api";

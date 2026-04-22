@@ -2,39 +2,30 @@
 
 import { useState } from "react";
 import { apiClient, mapApiErrorToMessage } from "@/lib/api-client";
-import type { EconomicsSimulation, PackEconomicsBundle, PackTierEconomics } from "@/lib/types";
-import { formatMoneyCents, formatPercentBps, formatPlainPercentBps, formatSignedMoneyCents } from "@/lib/format";
+import type { EconomicsSimulation, PackEconomicsBundle } from "@/lib/types";
+import { Button } from "@/components/ui/button";
+import { Chip } from "@/components/ui/chip";
+import { formatMoneyCents, formatPercentBps, formatPlainPercentBps } from "@/lib/format";
 
 type WhatIfSimulatorStubProps = {
   bundle: PackEconomicsBundle;
 };
 
-export function WhatIfSimulatorStub({ bundle }: WhatIfSimulatorStubProps): JSX.Element {
+const DEFAULT_ULTRA = 0.1;
+const DEFAULT_CHASE = 0.04;
+
+export function WhatIfSimulatorStub({ bundle: _bundle }: WhatIfSimulatorStubProps): JSX.Element {
   const [anchorScale, setAnchorScale] = useState(1);
-  const [ultraRareWeight, setUltraRareWeight] = useState(1.5);
-  const [chaseCap, setChaseCap] = useState<0 | 1 | 2>(1);
-  const [auctionFeeBps, setAuctionFeeBps] = useState(800);
+  const [ultraRareMaxWeight, setUltraRareMaxWeight] = useState(DEFAULT_ULTRA);
+  const [chaseMaxWeight, setChaseMaxWeight] = useState(DEFAULT_CHASE);
+  const [eliteEdgeOverride, setEliteEdgeOverride] = useState("");
   const [simulating, setSimulating] = useState(false);
   const [simulationError, setSimulationError] = useState<string | null>(null);
   const [simulation, setSimulation] = useState<EconomicsSimulation | null>(null);
 
-  const worstTier = bundle.tiers.reduce<PackTierEconomics | null>((acc, tier) => {
-    if (tier.actualHouseEdgeBps === null) {
-      return acc;
-    }
-    if (!acc || (acc.actualHouseEdgeBps ?? 0) > tier.actualHouseEdgeBps) {
-      return tier;
-    }
-    return acc;
-  }, null);
-
-  const ultraRareMaxWeight = ultraRareWeight / 100;
-  const chaseMaxWeight = chaseCap === 0 ? 0 : chaseCap === 1 ? 0.03 : 0.06;
-
   const runSimulation = async (): Promise<void> => {
     setSimulating(true);
     setSimulationError(null);
-
     try {
       const result = await apiClient.simulateEconomics({
         anchorScale,
@@ -49,243 +40,239 @@ export function WhatIfSimulatorStub({ bundle }: WhatIfSimulatorStubProps): JSX.E
     }
   };
 
-  return (
-    <section className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_minmax(280px,420px)]">
-      <div className="rounded-2xl border border-slate-200 bg-white p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-sm font-bold uppercase tracking-widest text-slate-500">What-if simulator</h2>
-            <p className="mt-1 text-xs text-slate-500">
-              Run `/api/admin/economics/simulate` with candidate knobs against current anchors.
-            </p>
-          </div>
-          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-            live
-          </span>
-        </div>
+  const resetKnobs = (): void => {
+    setAnchorScale(1);
+    setUltraRareMaxWeight(DEFAULT_ULTRA);
+    setChaseMaxWeight(DEFAULT_CHASE);
+    setEliteEdgeOverride("");
+    setSimulation(null);
+    setSimulationError(null);
+  };
 
-        <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2">
+  const missingPrices = simulation
+    ? Object.values(simulation.anchorSnapshotMeta.byRarity).reduce(
+        (sum, rarityMeta) => sum + rarityMeta.missingPriceCount,
+        0
+      )
+    : 0;
+
+  return (
+    <section className="rounded-pv-lg border border-pv-line bg-pv-surface-2 p-5">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-pv-h3">What-if simulator</div>
+          <p className="mt-0.5 text-[12px] text-pv-muted">
+            Solver · deterministic 10k rolls / tier · live price anchors · v3.3 scope-narrowed pre-check
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" variant="ghost" size="sm" onClick={resetKnobs}>
+            Reset
+          </Button>
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            loading={simulating}
+            onClick={() => void runSimulation()}
+          >
+            {simulating ? "Running…" : "Run projection"}
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
+        {/* KNOBS */}
+        <div className="rounded-pv border border-pv-line bg-pv-surface-3 p-4 space-y-3">
           <div>
-            <div className="flex items-baseline justify-between text-sm">
-              <label className="font-semibold">Card anchor scale</label>
-              <span className="tabular-nums text-slate-900">{anchorScale.toFixed(2)}×</span>
+            <div className="flex items-baseline justify-between">
+              <label className="text-[10px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                Anchor scale
+              </label>
+              <span className="tabular-nums text-[12px] text-pv-text">{anchorScale.toFixed(2)}×</span>
             </div>
             <input
               type="range"
-              min={0.01}
+              min={0.5}
               max={2}
               step={0.01}
               value={anchorScale}
               onChange={(event) => setAnchorScale(Number(event.target.value))}
-              className="mt-1 w-full accent-indigo-500"
+              className="mt-1 w-full accent-pv-gold"
             />
-            <div className="mt-1 font-mono text-[10px] text-slate-500">
-              Multiplier applied to live rarity price anchors before simulation.
-            </div>
+            <p className="mt-1 text-[11px] text-pv-muted">
+              {anchorScale === 1 ? "1.0× (live current price)" : `${anchorScale.toFixed(2)}× anchor`}
+            </p>
           </div>
 
           <div>
-            <div className="flex items-baseline justify-between text-sm">
-              <label className="font-semibold">Ultra-rare weight</label>
-              <span className="tabular-nums text-slate-900">{ultraRareWeight.toFixed(1)}%</span>
+            <div className="flex items-baseline justify-between">
+              <label className="text-[10px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                Ultra-rare max weight
+              </label>
+              <span className="tabular-nums text-[12px] text-pv-text">
+                {ultraRareMaxWeight.toFixed(2)}
+              </span>
             </div>
             <input
               type="range"
               min={0}
-              max={5}
-              step={0.1}
-              value={ultraRareWeight}
-              onChange={(event) => setUltraRareWeight(Number(event.target.value))}
-              className="mt-1 w-full accent-indigo-500"
+              max={0.5}
+              step={0.01}
+              value={ultraRareMaxWeight}
+              onChange={(event) => setUltraRareMaxWeight(Number(event.target.value))}
+              className="mt-1 w-full accent-pv-gold"
             />
-            <div className="mt-1 font-mono text-[10px] text-slate-500">
-              Applied as solver cap for ultra-rare slot weight.
-            </div>
+            <p className="mt-1 text-[11px] text-pv-muted">
+              {ultraRareMaxWeight.toFixed(2)} (default {DEFAULT_ULTRA.toFixed(2)})
+            </p>
           </div>
 
           <div>
-            <div className="flex items-baseline justify-between text-sm">
-              <label className="font-semibold">Chase cap per pack</label>
-              <span className="tabular-nums text-slate-900">{chaseCap} card</span>
-            </div>
-            <div className="mt-2 flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs font-semibold">
-              {[0, 1, 2].map((option) => {
-                const active = option === chaseCap;
-                return (
-                  <button
-                    key={option}
-                    type="button"
-                    onClick={() => setChaseCap(option as 0 | 1 | 2)}
-                    className={`flex-1 rounded-md px-2 py-1 transition ${
-                      active ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"
-                    }`}
-                  >
-                    {option}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div>
-            <div className="flex items-baseline justify-between text-sm">
-              <label className="font-semibold">Auction fee</label>
-              <span className="tabular-nums text-slate-900">{(auctionFeeBps / 100).toFixed(1)}%</span>
+            <div className="flex items-baseline justify-between">
+              <label className="text-[10px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                Chase max weight
+              </label>
+              <span className="tabular-nums text-[12px] text-pv-text">
+                {chaseMaxWeight.toFixed(2)}
+              </span>
             </div>
             <input
               type="range"
               min={0}
-              max={1500}
-              step={50}
-              value={auctionFeeBps}
-              onChange={(event) => setAuctionFeeBps(Number(event.target.value))}
-              className="mt-1 w-full accent-indigo-500"
+              max={0.25}
+              step={0.01}
+              value={chaseMaxWeight}
+              onChange={(event) => setChaseMaxWeight(Number(event.target.value))}
+              className="mt-1 w-full accent-pv-gold"
             />
-            <div className="mt-1 font-mono text-[10px] text-slate-500">Displayed only. Fee tuning is outside Phase 3.</div>
+            <p className="mt-1 text-[11px] text-pv-muted">
+              {chaseMaxWeight.toFixed(2)} (default {DEFAULT_CHASE.toFixed(2)})
+            </p>
+          </div>
+
+          <hr className="border-pv-line" />
+
+          <div>
+            <label
+              htmlFor="wif-elite-edge"
+              className="text-[10px] font-bold uppercase tracking-[0.08em] text-pv-muted-2"
+            >
+              Target edge override · Elite
+            </label>
+            <input
+              id="wif-elite-edge"
+              value={eliteEdgeOverride}
+              onChange={(event) => setEliteEdgeOverride(event.target.value)}
+              placeholder="30.9%"
+              className="mt-1 w-full min-h-9 rounded-[10px] border border-pv-line bg-pv-surface-2 px-3 py-1.5 text-[13px] text-pv-text outline-none transition focus:border-pv-line-strong"
+            />
+            <p className="mt-1 text-[11px] text-pv-muted">
+              Leave blank to use tier default (display only).
+            </p>
           </div>
         </div>
 
-        <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
-          <div className="flex items-center justify-between">
-            <div className="font-mono text-[10px] uppercase tracking-wider text-slate-500">Projection preview</div>
-            <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wider text-amber-700">
-              solver output
-            </span>
-          </div>
-          <p className="mt-2 text-[11px] text-slate-600">
-            Runs deterministic B1 simulation (10k rolls/tier) and returns EV distribution + projected margins.
-          </p>
-          <div className="mt-4 flex gap-2 text-xs">
-            <button
-              type="button"
-              onClick={() => void runSimulation()}
-              disabled={simulating}
-              className="rounded-lg bg-slate-900 px-3 py-1.5 font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
-            >
-              {simulating ? "Running projection..." : "Run projection"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setAnchorScale(1);
-                setUltraRareWeight(1.5);
-                setChaseCap(1);
-                setAuctionFeeBps(800);
-                setSimulation(null);
-                setSimulationError(null);
-              }}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold hover:bg-slate-50"
-            >
-              Reset
-            </button>
+        {/* RESULT */}
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Chip tone="neutral">
+              <span className="font-mono">
+                anchor source · {simulation ? simulation.anchorSource : "live_current_price_eligible_catalog"}
+              </span>
+            </Chip>
+            <Chip tone="neutral">
+              <span className="font-mono">missing prices · {missingPrices}</span>
+            </Chip>
           </div>
 
           {simulationError ? (
-            <p className="mt-3 rounded-lg bg-rose-50 p-2 text-xs font-semibold text-rose-700">{simulationError}</p>
+            <p
+              role="alert"
+              className="mt-3 rounded-pv-sm border border-pv-accent/30 bg-[rgba(239,68,68,0.08)] p-2 text-[12px] font-semibold text-[#fca5a5]"
+            >
+              {simulationError}
+            </p>
           ) : null}
 
           {simulation ? (
-            <div className="mt-4 space-y-2">
-              <div className="rounded-lg border border-slate-200 bg-white p-2 text-[11px] text-slate-600">
-                anchor source: <span className="font-mono">{simulation.anchorSource}</span> · missing prices{" "}
-                <span className="font-semibold">
-                  {Object.values(simulation.anchorSnapshotMeta.byRarity).reduce(
-                    (sum, rarityMeta) => sum + rarityMeta.missingPriceCount,
-                    0
-                  )}
-                </span>
-              </div>
-              {simulation.tiers.map((tier) => (
-                <div key={tier.tier} className="rounded-lg border border-slate-200 bg-white p-3">
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs font-bold uppercase tracking-wide text-slate-600">{tier.tier}</p>
-                    <div className="flex items-center gap-1">
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
-                          tier.constraintsSatisfied ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
-                        }`}
-                      >
-                        {tier.constraintsSatisfied ? "feasible" : "constraint fail"}
-                      </span>
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
-                          tier.aggressiveEdgeWarning
-                            ? "bg-amber-100 text-amber-800"
-                            : tier.edgeDeltaBps < 0
-                            ? "bg-rose-100 text-rose-800"
-                            : "bg-sky-100 text-sky-800"
-                        }`}
-                      >
-                        {tier.aggressiveEdgeWarning
-                          ? `aggressive ${formatPercentBps(tier.edgeDeltaBps)}`
-                          : tier.edgeDeltaBps < 0
-                          ? `below ${formatPercentBps(tier.edgeDeltaBps)}`
-                          : "target corridor"}
-                      </span>
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              {simulation.tiers.map((tier) => {
+                const pass = tier.constraintsSatisfied && tier.edgeDeltaBps >= 0;
+                return (
+                  <div
+                    key={tier.tier}
+                    className={`rounded-pv border p-4 ${
+                      pass
+                        ? "border-pv-line bg-pv-surface-3"
+                        : "border-pv-accent/35 bg-[rgba(239,68,68,0.04)]"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="text-pv-h3 capitalize">{tier.tier}</div>
+                      <Chip tone={pass ? "good" : "danger"}>
+                        {pass ? "Pass" : "Constraint fail"}
+                      </Chip>
+                    </div>
+                    <p
+                      className={`mt-1 text-[12px] ${
+                        pass ? "text-pv-muted" : "text-pv-accent"
+                      }`}
+                    >
+                      target {formatPlainPercentBps(tier.targetEdgeBps)} · achieved{" "}
+                      {formatPlainPercentBps(tier.achievedEdgeBps)} · Δ {formatPercentBps(tier.edgeDeltaBps)}
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-4 text-[12px]">
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                          mean EV
+                        </div>
+                        <div
+                          className={`font-extrabold tabular-nums ${pass ? "text-pv-text" : "text-pv-accent"}`}
+                        >
+                          {formatMoneyCents(Math.round(tier.meanEV))}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                          win rate
+                        </div>
+                        <div className="font-extrabold tabular-nums text-pv-text">
+                          {(tier.winRate * 100).toFixed(1)}%
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                          p50
+                        </div>
+                        <div className="font-extrabold tabular-nums text-pv-text">
+                          {formatMoneyCents(Math.round(tier.p50))}
+                        </div>
+                      </div>
                     </div>
                   </div>
-                  <p className="mt-2 text-xs text-slate-600">
-                    mean EV {formatMoneyCents(Math.round(tier.meanEV))} · win rate {(tier.winRate * 100).toFixed(2)}% · p50{" "}
-                    {formatMoneyCents(Math.round(tier.p50))}
-                  </p>
-                  <p className="mt-1 text-[11px] text-slate-500">
-                    target {formatPlainPercentBps(tier.targetEdgeBps)} · achieved {formatPlainPercentBps(tier.achievedEdgeBps)} · delta{" "}
-                    {formatPercentBps(tier.edgeDeltaBps)}
-                  </p>
-                </div>
-              ))}
+                );
+              })}
+            </div>
+          ) : (
+            <p className="mt-3 text-[12px] text-pv-muted">
+              Click <span className="font-semibold text-pv-text">Run projection</span> to generate
+              per-tier EV distribution and achieved edge.
+            </p>
+          )}
+
+          {simulation ? (
+            <div className="mt-3 rounded-pv-sm border border-pv-info/30 bg-[rgba(56,189,248,0.06)] px-3 py-2 text-[12px] text-pv-info">
+              <strong className="text-pv-info">Hint</strong>
+              <span className="text-pv-muted">
+                {" "}
+                · Lowering <span className="font-mono">ultraRareMaxWeight</span> by 0.02 typically
+                recovers Elite edge by ~2-4pp (run projection to confirm).
+              </span>
             </div>
           ) : null}
         </div>
       </div>
-
-      <div className="rounded-2xl border border-slate-200 bg-white p-6">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[10px] uppercase tracking-wider text-rose-600">leading suspect</span>
-          <span className="rounded-full border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">
-            engineering
-          </span>
-        </div>
-        <h3 className="mt-2 text-base font-bold">
-          {worstTier
-            ? `${worstTier.displayName} actual edge ${formatPlainPercentBps(worstTier.actualHouseEdgeBps ?? 0)} vs ${formatPlainPercentBps(worstTier.targetHouseEdgeBps)} target.`
-            : "Tier house edges are within configured corridor."}
-        </h3>
-        <p className="mt-1 text-sm leading-relaxed text-slate-600">
-          Check rarity weights in <span className="font-mono">pack-tiers.ts</span> and card anchors in{" "}
-          <span className="font-mono">pokemon_cards.current_price</span>. Fees reconcile at the BPS level in the
-          integrity panel; the lever is pack economics.
-        </p>
-
-        <div className="mt-4 grid grid-cols-3 gap-3 text-xs">
-          <MetricCard label="Σ margin" value={formatSignedMoneyCents(bundle.portfolio.sigmaMarginCents)} />
-          <MetricCard
-            label="Edge gap"
-            value={
-              bundle.portfolio.actualHouseEdgeBps === null
-                ? "—"
-                : formatPlainPercentBps(bundle.portfolio.actualHouseEdgeBps - bundle.portfolio.theoreticalHouseEdgeBps)
-            }
-          />
-          <MetricCard
-            label="Worst pack"
-            value={
-              worstTier && worstTier.worstMarginCents !== null
-                ? formatMoneyCents(Math.abs(worstTier.worstMarginCents))
-                : "—"
-            }
-          />
-        </div>
-      </div>
     </section>
-  );
-}
-
-function MetricCard({ label, value }: { label: string; value: string }): JSX.Element {
-  return (
-    <div className="rounded-lg bg-slate-50 p-3">
-      <div className="font-mono text-[10px] uppercase tracking-wider text-slate-500">{label}</div>
-      <div className="mt-1 text-lg font-bold tabular-nums">{value}</div>
-    </div>
   );
 }

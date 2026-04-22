@@ -3,19 +3,69 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light;
-  --pv-bg-top: #f8fafc;
-  --pv-bg-bottom: #e2e8f0;
-  --pv-text: #0f172a;
-  --pv-font: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  color-scheme: dark;
+  --pv-surface: #0a0a0a;
+  --pv-surface-2: #111114;
+  --pv-surface-3: #17171b;
+  --pv-surface-4: #1e1e23;
+  --pv-line: #2a2a30;
+  --pv-line-strong: #3a3a42;
+  --pv-text: #f4f4f5;
+  --pv-muted: #8b94a3;
+  --pv-muted-2: #5f6876;
+  --pv-gold: #ffea9b;
+  --pv-accent: #ef4444;
+  --pv-good: #10b981;
+  --pv-warn: #f59e0b;
+  --pv-info: #38bdf8;
+  --pv-r-common: #9aa3b2;
+  --pv-r-uncommon: #10b981;
+  --pv-r-rare: #38bdf8;
+  --pv-r-holo: #a78bfa;
+  --pv-r-ultra: #f472b6;
+  --pv-r-chase: #ffea9b;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
 }
 
 body {
-  margin: 0;
   min-height: 100vh;
-  background: linear-gradient(180deg, var(--pv-bg-top) 0%, var(--pv-bg-bottom) 100%);
+  background-color: var(--pv-surface);
   color: var(--pv-text);
-  font-family: var(--pv-font);
+  font-family: var(--font-inter), "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Legacy Tailwind-class overrides kept for in-progress consumers until R15 sweep.
+   Everything resolves to the new dark palette so partial migration doesn't break
+   visual continuity. */
+.bg-white {
+  background-color: var(--pv-surface-2);
+}
+.bg-slate-50,
+.bg-slate-100 {
+  background-color: var(--pv-surface-3);
+}
+.border-slate-200,
+.border-slate-300 {
+  border-color: var(--pv-line);
+}
+.text-slate-950,
+.text-slate-900,
+.text-slate-800 {
+  color: var(--pv-text);
+}
+.text-slate-700 {
+  color: var(--pv-text);
+}
+.text-slate-600,
+.text-slate-500 {
+  color: var(--pv-muted);
 }
 
 a {
@@ -25,7 +75,57 @@ a {
 
 button:focus-visible,
 a:focus-visible,
-input:focus-visible {
-  outline: 2px solid #e11d48;
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--pv-gold);
   outline-offset: 2px;
+}
+
+::selection {
+  background-color: rgba(255, 234, 155, 0.35);
+  color: var(--pv-text);
+}
+
+/* Rarity-keyed card placeholder gradients (CardImage fallback) */
+.pv-card-gradient-common {
+  background: linear-gradient(135deg, #1a1a20, #0a0a0e);
+}
+.pv-card-gradient-uncommon {
+  background: linear-gradient(135deg, #0e2a1f, #0a0a0e);
+}
+.pv-card-gradient-rare {
+  background: linear-gradient(135deg, #0a1f3a, #0a0a0e);
+}
+.pv-card-gradient-holo {
+  background: linear-gradient(135deg, #3a1e4a, #1a1a20, #2a4a6a);
+}
+.pv-card-gradient-ultra {
+  background: linear-gradient(135deg, #4a1e3a, #1a0a20, #2a1a4a);
+}
+.pv-card-gradient-chase {
+  background: linear-gradient(135deg, #3a2a0a, #1a0e00, #4a3a0a);
+}
+
+/* Slot face-down stripe pattern for pack reveal */
+.pv-slot-locked {
+  background: repeating-linear-gradient(
+    135deg,
+    #0e0e12,
+    #0e0e12 8px,
+    #101016 8px,
+    #101016 16px
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

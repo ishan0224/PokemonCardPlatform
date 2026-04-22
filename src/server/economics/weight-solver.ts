@@ -351,7 +351,16 @@ function buildEffectiveRarityPools(input: SolverTierInput, bounds: SolverBounds)
     chase: [...(input.rarityPricePools.chase ?? [])]
   } satisfies Record<RarityTier, number[]>;
 
-  for (const rarity of Object.keys(effectivePools) as RarityTier[]) {
+  const referencedRarities = new Set<RarityTier>();
+  for (const slot of input.slots) {
+    for (const entry of slot) {
+      if (entry.weight > 0) {
+        referencedRarities.add(entry.rarity);
+      }
+    }
+  }
+
+  for (const rarity of referencedRarities) {
     if (effectivePools[rarity].length === 0) {
       return {
         effectivePools,

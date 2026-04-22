@@ -5,66 +5,84 @@ type EconomicsIncidentBannerProps = {
   tiers: PackTierEconomics[];
   tiersLosingMoneyCount: number;
   incidentDeltaBps: number;
+  persisted?: boolean;
 };
 
 function isTierOutOfBand(tier: PackTierEconomics, deltaBps: number): boolean {
-  if (tier.actualHouseEdgeBps === null) {
-    return false;
-  }
+  if (tier.actualHouseEdgeBps === null) return false;
   return Math.abs(tier.actualHouseEdgeBps - tier.targetHouseEdgeBps) > deltaBps;
 }
 
 export function EconomicsIncidentBanner({
   tiers,
   tiersLosingMoneyCount,
-  incidentDeltaBps
+  incidentDeltaBps,
+  persisted
 }: EconomicsIncidentBannerProps): JSX.Element | null {
   const outOfBandTiers = tiers.filter((tier) => isTierOutOfBand(tier, incidentDeltaBps));
 
-  if (tiersLosingMoneyCount === 0 && outOfBandTiers.length === 0) {
-    return null;
-  }
+  if (tiersLosingMoneyCount === 0 && outOfBandTiers.length === 0) return null;
 
   const losing = tiers.filter((tier) => tier.packsPurchased > 0 && tier.sigmaMarginCents < 0);
+  const affected = losing.length > 0 ? losing : outOfBandTiers;
+  const firstTier = affected[0];
+  const deltaPp = firstTier && firstTier.actualHouseEdgeBps !== null
+    ? (firstTier.actualHouseEdgeBps - firstTier.targetHouseEdgeBps) / 100
+    : 0;
 
   return (
-    <div className="rounded-2xl border border-rose-200 bg-gradient-to-r from-rose-50 via-rose-50 to-white p-5">
-      <div className="flex items-start gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-rose-100 text-rose-700">
-          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-          </svg>
-        </div>
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-rose-600">critical · open</span>
-            <span className="rounded-full border border-rose-200 bg-white px-2 py-0.5 text-[10px] font-bold uppercase text-rose-700">
-              pack economics out of corridor
-            </span>
+    <section
+      className="rounded-pv-lg border border-pv-accent/35 bg-gradient-to-b from-[rgba(239,68,68,0.08)] to-transparent p-4"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <div
+            aria-hidden="true"
+            className="grid h-9 w-9 place-items-center rounded-[10px] bg-[rgba(239,68,68,0.14)] font-extrabold text-[#fca5a5]"
+          >
+            !
           </div>
-          <h3 className="mt-1 text-base font-bold text-rose-950">
-            {tiersLosingMoneyCount > 0
-              ? `${tiersLosingMoneyCount} of ${tiers.length} tiers are losing money in this window.`
-              : `${outOfBandTiers.length} tier(s) diverge from the target house edge.`}
-          </h3>
-          <p className="mt-1 text-sm leading-relaxed text-rose-900/80">
-            {losing.length > 0
-              ? losing
-                  .map(
-                    (tier) =>
-                      `${tier.displayName} actual edge ${formatPlainPercentBps(tier.actualHouseEdgeBps ?? 0)} vs target ${formatPlainPercentBps(tier.targetHouseEdgeBps)}`
-                  )
-                  .join(" · ")
-              : outOfBandTiers
-                  .map(
-                    (tier) =>
-                      `${tier.displayName} actual edge ${formatPlainPercentBps(tier.actualHouseEdgeBps ?? 0)} vs target ${formatPlainPercentBps(tier.targetHouseEdgeBps)}`
-                  )
-                  .join(" · ")}
-            . Fees cannot offset pack losses — check card anchor prices and rarity weights.
-          </p>
+          <div>
+            <div className="text-pv-h3 text-[#fca5a5]">
+              {firstTier ? `${firstTier.displayName} tier edge incident` : "Pack edge incident"}
+            </div>
+            <p className="mt-0.5 text-[12px] text-pv-muted">
+              {firstTier && firstTier.actualHouseEdgeBps !== null ? (
+                <>
+                  Achieved {formatPlainPercentBps(firstTier.actualHouseEdgeBps)} vs. target{" "}
+                  {formatPlainPercentBps(firstTier.targetHouseEdgeBps)} · delta{" "}
+                  {deltaPp >= 0 ? "+" : "−"}
+                  {Math.abs(deltaPp).toFixed(1)}pp · {affected.length} tier(s) affected
+                </>
+              ) : (
+                <>
+                  {tiersLosingMoneyCount} of {tiers.length} tier(s) out of corridor (threshold ±
+                  {formatPlainPercentBps(incidentDeltaBps)}).
+                </>
+              )}
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {persisted ? (
+            <span className="rounded-[10px] border border-pv-line bg-pv-surface-3 px-2 py-1 text-[11px] font-bold text-pv-muted">
+              Persisted
+            </span>
+          ) : null}
+          <button
+            type="button"
+            className="inline-flex min-h-9 items-center rounded-[10px] border border-transparent px-3 py-1.5 text-[12px] font-bold text-pv-muted hover:bg-pv-surface-2 hover:text-pv-text"
+          >
+            Acknowledge
+          </button>
+          <button
+            type="button"
+            className="inline-flex min-h-9 items-center rounded-[10px] border border-pv-line bg-pv-surface-3 px-3 py-1.5 text-[12px] font-bold text-pv-text hover:border-pv-line-strong"
+          >
+            Open What-If
+          </button>
         </div>
       </div>
-    </div>
+    </section>
   );
 }

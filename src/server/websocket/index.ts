@@ -19,6 +19,7 @@ import {
 import { PRICE_UPDATE_EVENT, type PriceUpdateEvent } from "../../lib/realtime/price-update";
 import { canJoinPrivateRoom, isPublicRoom, roomNames } from "./rooms";
 import { emitAuctionListEventWithCoalescing, type AuctionListRealtimeEventName } from "./auctions-list-coalescer";
+import { recordAuctionWatcherSample } from "../services/auction-watcher-metrics.service";
 
 type MarketplaceRealtimeEventName = "new_listing" | "listing_sold" | "listing_cancelled";
 type MarketplaceRealtimeEnvelope = {
@@ -88,6 +89,7 @@ function emitAuctionWatcherCount(io: IOServer, room: string): void {
 
   const count = io.sockets.adapter.rooms.get(room)?.size ?? 0;
   io.to(room).emit("watcher_count", { auctionId, count });
+  recordAuctionWatcherSample(auctionId, count);
 }
 
 async function setupMarketplaceRelay(io: IOServer): Promise<void> {
@@ -298,6 +300,10 @@ export function createSocketServer(httpServer: HttpServer): IOServer {
   });
 
   io.on("connection", (socket) => {
+    if (socket.data.role === "admin") {
+      socket.join(roomNames.adminMetrics());
+    }
+
     socket.on("join-room", (room: string) => {
       if (typeof room !== "string" || room.length === 0) {
         return;
@@ -307,8 +313,12 @@ export function createSocketServer(httpServer: HttpServer): IOServer {
         typeof socket.data.userId === "string" && socket.data.userId.length > 0
           ? socket.data.userId
           : null;
+      const userRole =
+        socket.data.role === "admin" || socket.data.role === "user"
+          ? (socket.data.role as "admin" | "user")
+          : null;
 
-      if (isPublicRoom(room) || canJoinPrivateRoom(room, userId)) {
+      if (isPublicRoom(room) || canJoinPrivateRoom(room, userId, userRole)) {
         socket.join(room);
         return;
       }

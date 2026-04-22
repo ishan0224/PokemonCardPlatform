@@ -5,6 +5,11 @@ node_modules/
 .next/
 out/
 
+scripts/
+
+
+# Ignore nested test directories across the repo
+**/__tests__/
 # build artifacts
 dist/
 coverage/
@@ -25,6 +30,7 @@ pnpm-debug.log*
 
 # docs
 docs/
+demo/
 
 # macOS
 .DS_Store

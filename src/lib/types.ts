@@ -20,6 +20,21 @@ export type ListingStatus = "active" | "sold" | "cancelled";
 export type AuctionStatus = "active" | "completed" | "cancelled";
 export type AuctionDurationType = "1h" | "6h" | "24h";
 export type HoldStatus = "active" | "released" | "captured";
+export type CollectionCardTransactionType =
+  | "pack_purchase"
+  | "trade_buy"
+  | "trade_sell"
+  | "auction_win"
+  | "auction_sell"
+  | "auction_fee"
+  | "trade_fee";
+
+export interface CollectionCardTransaction {
+  id: string;
+  type: CollectionCardTransactionType;
+  amount: number;
+  createdAtIso: string;
+}
 
 export interface ApiError {
   code: string;
@@ -45,6 +60,8 @@ export interface PackTierConfig {
 }
 
 export type RevenueStreamKey = "pack_margin" | "trade_fee" | "auction_fee" | "platform_discount" | "manual_adjustment";
+export type RevenueProjectionStreamKey = "pack_margin" | "trade_fee" | "auction_fee";
+export type RevenueProjectionMethod = "linear_extrapolation";
 
 export interface EconomicsWindow {
   fromIso: string;
@@ -91,6 +108,22 @@ export interface EconomicsSummary {
   auctionMaxWinningBidCents: MoneyCents;
   platformRevenueRowCount: number;
   transactionRowCount: number;
+  revenueProjection: RevenueProjection;
+  marginAlertCount24h: number;
+  recentMarginAlerts: MarginAlertSnapshot[];
+}
+
+export interface RevenueProjectionStream {
+  historicalDaily: MoneyCents;
+  projectedHorizon: MoneyCents;
+  method: RevenueProjectionMethod;
+}
+
+export interface RevenueProjection {
+  windowDays: number;
+  horizonDays: number;
+  perStream: Record<RevenueProjectionStreamKey, RevenueProjectionStream>;
+  totalProjectedHorizon: MoneyCents;
 }
 
 export interface PackTierEconomics {
@@ -157,6 +190,70 @@ export interface AuctionSnipeMetrics {
   bidsInFinal10Pct: BidsInFinal10PctMetric;
 }
 
+export interface AuctionPriceVsMarketMetrics {
+  window: EconomicsWindow;
+  sampleSize: number;
+  medianRatio: number;
+  meanRatio: number;
+  p10: number;
+  p50: number;
+  p90: number;
+  lowRatioCount: number;
+  highRatioCount: number;
+}
+
+export interface MarginAlertSnapshot {
+  tier: PackTier;
+  direction: "below_band" | "above_band";
+  deltaBps: number;
+  ranAtIso: string;
+}
+
+export type FairnessAuditRunSource = "nightly" | "on_demand";
+
+export interface FairnessAuditResult {
+  id: UUID;
+  windowStartIso: string;
+  windowEndIso: string;
+  observedCounts: Record<RarityTier, number>;
+  expectedCounts: Record<RarityTier, number>;
+  testStatistic: number;
+  degreesOfFreedom: number;
+  pValue: number;
+  runSource: FairnessAuditRunSource;
+  ranAtIso: string;
+  sampleSize: number;
+  monteCarloApplied: boolean;
+  monteCarloSamples: number | null;
+  monteCarloExtremeCount: number | null;
+}
+
+export interface UserHealthMetrics {
+  dropEngagement: {
+    purchasesPerUserAvg: number;
+    selloutTimeAvgSeconds: number | null;
+    dropfillDistribution: {
+      lt25: number;
+      gte25Lt50: number;
+      gte50Lt75: number;
+      gte75: number;
+    };
+  };
+  auctionParticipation: {
+    bidsPerAuctionAvg: number;
+    uniqueBiddersPerAuctionAvg: number;
+    watcherCountAvg: number | null;
+    watcherCountMetricSource: "auction_watcher_samples" | "not_collected";
+  };
+  retention: {
+    cohortBuyerCount: number;
+    d1ReturningBuyerCount: number;
+    d7ReturningBuyerCount: number;
+    d1Rate: number;
+    d7Rate: number;
+  };
+}
+
 export interface PackEconomicsBundle {
   window: EconomicsWindow;
   generatedAtIso: string;
@@ -171,6 +268,42 @@ export interface PackEconomicsBundle {
   topAuctions: TopAuction[];
   integrity: IntegrityChecks;
   auctionSnipeMetrics: AuctionSnipeMetrics;
+  auctionPriceVsMarket: AuctionPriceVsMarketMetrics;
+  incidentDeltaBps: number;
+  rateLimitHitCount24h: number;
+  rateLimitHitGlobalCount24h: number;
+  autoRebalanceTriggeredCount24h: number;
+  finalWindowBidCount24h: number;
+  openAuctionFlagCount: number;
+  marginIncidentCount24h: number;
+  marginAlertCount24h: number;
+  recentMarginAlerts: MarginAlertSnapshot[];
+  verificationUsageDistinctUsers7d: number;
+  userHealth: UserHealthMetrics;
+}
+
+export interface AdminMetricsDeltaEvent {
+  rateLimitHitCountDelta: number;
+  rateLimitHitGlobalCountDelta: number;
+  autoRebalanceTriggeredCountDelta: number;
+  finalWindowBidCountDelta: number;
+  openAuctionFlagCountDelta: number;
+  marginIncidentCountDelta: number;
+  persisted?: boolean;
+  emittedAtIso: string;
+}
+
+export type AuctionFlagResolution = "dismissed" | "actioned";
+
+export interface AuctionFlagReviewItem {
+  id: UUID;
+  auctionId: UUID;
+  flagType: string;
+  evidence: Record<string, unknown>;
+  createdAtIso: string;
+  resolvedAtIso: string | null;
+  resolvedBy: UUID | null;
+  resolution: AuctionFlagResolution | null;
 }
 
 export interface EconomicsSimulationTier {

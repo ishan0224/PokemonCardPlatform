@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api-client";
 import { formatMoneyCents } from "@/lib/format";
+import { routes } from "@/lib/routes";
 import { useAuth } from "@/hooks/use-auth";
 
 function NavLink({ href, label }: { href: string; label: string }): JSX.Element {
@@ -29,22 +30,22 @@ export function SiteHeader(): JSX.Element {
   const onLogout = async (): Promise<void> => {
     await apiClient.logout();
     clearAuth();
-    router.push("/login");
+    router.push(routes.auth.login);
   };
 
   return (
     <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/90 backdrop-blur">
       <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
         <div className="flex items-center gap-4">
-          <Link href="/" className="text-xl font-black tracking-tight text-slate-950">
+          <Link href={routes.home} className="text-xl font-black tracking-tight text-slate-950">
             PullVault
           </Link>
           <nav className="hidden items-center gap-1 md:flex">
-            <NavLink href="/drops" label="Drops" />
-            <NavLink href="/collection" label="Collection" />
-            <NavLink href="/marketplace" label="Marketplace" />
-            <NavLink href="/auctions" label="Auctions" />
-            {user?.role === "admin" ? <NavLink href="/admin" label="Admin" /> : null}
+            <NavLink href={routes.drops.index} label="Drops" />
+            <NavLink href={routes.collection.index} label="Collection" />
+            <NavLink href={routes.marketplace.index} label="Marketplace" />
+            <NavLink href={routes.auctions.index} label="Auctions" />
+            {user?.role === "admin" ? <NavLink href={routes.admin.index} label="Admin" /> : null}
           </nav>
         </div>
 
@@ -78,13 +79,13 @@ export function SiteHeader(): JSX.Element {
           ) : (
             <>
               <Link
-                href="/login"
+                href={routes.auth.login}
                 className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700 transition hover:border-slate-900 hover:text-slate-950"
               >
                 Login
               </Link>
               <Link
-                href="/register"
+                href={routes.auth.register}
                 className="rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white transition hover:bg-rose-700"
               >
                 Register

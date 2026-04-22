@@ -1,6 +1,5 @@
 import type { TopAuction } from "@/lib/types";
-import { formatDateTime, formatMoneyCents, formatSignedMoneyCents } from "@/lib/format";
-import { LeaderboardItem } from "./leaderboard-item";
+import { formatDateTime, formatMoneyCents } from "@/lib/format";
 
 type TopAuctionsListProps = {
   auctions: TopAuction[];
@@ -8,39 +7,34 @@ type TopAuctionsListProps = {
 
 export function TopAuctionsList({ auctions }: TopAuctionsListProps): JSX.Element {
   return (
-    <section className="h-full w-full rounded-2xl border border-slate-200 bg-white p-6">
-      <h2 className="text-sm font-bold uppercase tracking-widest text-slate-500">Top auctions · window</h2>
-      <p className="mt-1 text-xs text-slate-500">Gavel price and captured 8% platform fee.</p>
+    <section className="h-full rounded-pv-lg border border-pv-line bg-pv-surface-2 p-5">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-pv-h3">Top auctions</h2>
+        <span className="text-[11px] text-pv-muted">by winning bid</span>
+      </div>
 
       {auctions.length === 0 ? (
-        <p className="mt-4 text-sm text-slate-500">No auctions settled in this window.</p>
+        <p className="text-[13px] text-pv-muted">No auctions settled in this window.</p>
       ) : (
-        <ol className="mt-4 space-y-2 text-sm">
+        <ul className="space-y-2 text-[13px]">
           {auctions.map((auction, index) => (
-            <li key={auction.auctionId}>
-              <LeaderboardItem
-                rank={index + 1}
-                avatar={{
-                  kind: "image",
-                  imageUrl: auction.cardImageUrl ?? "",
-                  alt: auction.cardName,
-                  fallbackLabel: "A",
-                  fallbackClassName: "bg-emerald-100 text-emerald-700"
-                }}
-                title={auction.cardName}
-                subtitle={
-                  <span>
-                    {`${auction.hostUsername}'s Auction`} · {formatDateTime(auction.settledAtIso)}
-                  </span>
-                }
-                primaryValue={formatMoneyCents(auction.winningBidCents)}
-                secondaryValue={
-                  <span className="text-emerald-600">fee {formatSignedMoneyCents(auction.feeCapturedCents)}</span>
-                }
-              />
+            <li key={auction.auctionId} className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate font-bold text-pv-text">{auction.cardName}</p>
+                <p className="truncate text-[11px] text-pv-muted">
+                  @{auction.hostUsername} · {formatDateTime(auction.settledAtIso)}
+                </p>
+              </div>
+              <p
+                className={`shrink-0 font-extrabold tabular-nums ${
+                  index === 0 ? "text-pv-gold" : "text-pv-text"
+                }`}
+              >
+                {formatMoneyCents(auction.winningBidCents)}
+              </p>
             </li>
           ))}
-        </ol>
+        </ul>
       )}
     </section>
   );

@@ -1,196 +1,144 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
-  ApiClientError,
   apiClient,
   mapApiErrorToMessage,
   type MarketplaceListing,
   type MarketplaceSort
 } from "@/lib/api-client";
+import { swrKeys, useApiSWRInfinite } from "@/lib/swr";
 import type { RarityTier } from "@/lib/types";
 import { useMarketplaceRoom } from "./use-socket";
 import { useAuth } from "./use-auth";
 
+type MarketplacePage = {
+  listings: MarketplaceListing[];
+  page: number;
+  limit: number;
+  total: number;
+};
+
 type UseMarketplaceState = {
   listings: MarketplaceListing[];
   loading: boolean;
+  loadingMore: boolean;
   error: string | null;
   page: number;
   limit: number;
   total: number;
+  hasMore: boolean;
   buyPendingListingId: string | null;
   refresh: () => Promise<void>;
+  loadMore: () => Promise<void>;
   buyListing: (listingId: string) => Promise<void>;
 };
 
 type UseMarketplaceInput = {
   rarity?: RarityTier | null;
   sort?: MarketplaceSort;
-  page?: number;
   limit?: number;
   enableRealtime?: boolean;
 };
 
 export function useMarketplace(input: UseMarketplaceInput = {}): UseMarketplaceState {
   const { refreshAuth } = useAuth();
-  const [listings, setListings] = useState<MarketplaceListing[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [page, setPage] = useState(input.page ?? 1);
-  const [limit, setLimit] = useState(input.limit ?? 24);
-  const [total, setTotal] = useState(0);
   const [buyPendingListingId, setBuyPendingListingId] = useState<string | null>(null);
-  const mountedRef = useRef(true);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  const limit = input.limit ?? 24;
+
+  const { data, error, isLoading, isValidating, size, setSize, mutate } = useApiSWRInfinite(
+    (index, previousPageData: MarketplacePage | null) => {
+      if (previousPageData && previousPageData.listings.length < previousPageData.limit) {
+        return null;
+      }
+
+      return swrKeys.marketplace.list({
+        rarity: input.rarity ?? null,
+        sort: input.sort ?? "newest",
+        page: index + 1,
+        limit
+      });
+    },
+    (params) =>
+      apiClient.listMarketplaceListings({
+        rarity: (params as { rarity?: RarityTier | null }).rarity ?? null,
+        sort: (params as { sort?: MarketplaceSort }).sort ?? "newest",
+        page: (params as { page?: number }).page ?? 1,
+        limit: (params as { limit?: number }).limit ?? limit
+      }),
+    {
+      revalidateFirstPage: true,
+      shouldRetryOnError: false,
+      persistSize: false
+    }
+  );
+
+  const listings = useMemo(() => (data ? data.flatMap((page) => page.listings) : []), [data]);
+  const total = data?.[0]?.total ?? 0;
+  const page = size;
+  const hasMore = listings.length < total;
+  const loadingMore = Boolean(data) && isValidating;
+  const loading = isLoading && !data;
 
   const refresh = useCallback(async (): Promise<void> => {
-    if (!mountedRef.current) {
+    setActionError(null);
+    await mutate();
+  }, [mutate]);
+
+  const loadMore = useCallback(async (): Promise<void> => {
+    if (!hasMore || loadingMore) {
       return;
     }
 
-    setLoading(true);
-    setError(null);
-
-    try {
-      const result = await apiClient.listMarketplaceListings({
-        rarity: input.rarity ?? null,
-        sort: input.sort ?? "newest",
-        page: input.page ?? 1,
-        limit: input.limit ?? 24
-      });
-
-      if (!mountedRef.current) {
-        return;
-      }
-
-      setListings(result.listings);
-      setPage(result.page);
-      setLimit(result.limit);
-      setTotal(result.total);
-    } catch (err) {
-      if (!mountedRef.current) {
-        return;
-      }
-      const message = mapApiErrorToMessage(err);
-      setError(message || "Failed to load marketplace.");
-    } finally {
-      if (mountedRef.current) {
-        setLoading(false);
-      }
-    }
-  }, [input.limit, input.page, input.rarity, input.sort]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    let mounted = true;
-
-    const bootstrap = async (): Promise<void> => {
-      setLoading(true);
-      setError(null);
-
-      try {
-        const result = await apiClient.listMarketplaceListings(
-          {
-            rarity: input.rarity ?? null,
-            sort: input.sort ?? "newest",
-            page: input.page ?? 1,
-            limit: input.limit ?? 24
-          },
-          controller.signal
-        );
-
-        if (!mounted) {
-          return;
-        }
-
-        setListings(result.listings);
-        setPage(result.page);
-        setLimit(result.limit);
-        setTotal(result.total);
-      } catch (err) {
-        if (!mounted) {
-          return;
-        }
-        if (err instanceof ApiClientError && err.code === "REQUEST_ABORTED") {
-          return;
-        }
-        const message = mapApiErrorToMessage(err);
-        setError(message || "Failed to load marketplace.");
-      } finally {
-        if (mounted) {
-          setLoading(false);
-        }
-      }
-    };
-
-    void bootstrap();
-
-    return () => {
-      mounted = false;
-      controller.abort();
-    };
-  }, [input.limit, input.page, input.rarity, input.sort]);
+    await setSize((current) => current + 1);
+  }, [hasMore, loadingMore, setSize]);
 
   const buyListing = useCallback(
     async (listingId: string): Promise<void> => {
-      if (!mountedRef.current) {
-        return;
-      }
-
       setBuyPendingListingId(listingId);
-      setError(null);
+      setActionError(null);
 
       try {
         await apiClient.buyListing(listingId);
-        await Promise.all([refresh(), refreshAuth()]);
-      } catch (err) {
-        if (!mountedRef.current) {
-          return;
-        }
-        setError(mapApiErrorToMessage(err));
+        await Promise.all([mutate(), refreshAuth()]);
+      } catch (caughtError) {
+        setActionError(mapApiErrorToMessage(caughtError) || "Failed to buy listing.");
       } finally {
-        if (mountedRef.current) {
-          setBuyPendingListingId(null);
-        }
+        setBuyPendingListingId(null);
       }
     },
-    [refresh, refreshAuth]
+    [mutate, refreshAuth]
   );
 
   useMarketplaceRoom(Boolean(input.enableRealtime), {
     onListingCreated: () => {
-      void refresh();
+      void mutate();
     },
     onListingSold: () => {
-      void refresh();
+      void mutate();
     },
     onListingCancelled: () => {
-      void refresh();
+      void mutate();
     },
     onConnected: () => {
-      void refresh();
+      void mutate();
     }
   });
 
-  return useMemo(
-    () => ({
-      listings,
-      loading,
-      error,
-      page,
-      limit,
-      total,
-      buyPendingListingId,
-      refresh,
-      buyListing
-    }),
-    [listings, loading, error, page, limit, total, buyPendingListingId, refresh, buyListing]
-  );
+  return {
+    listings,
+    loading,
+    loadingMore,
+    error: actionError ?? (error ? mapApiErrorToMessage(error) || "Failed to load marketplace." : null),
+    page,
+    limit,
+    total,
+    hasMore,
+    buyPendingListingId,
+    refresh,
+    loadMore,
+    buyListing
+  };
 }

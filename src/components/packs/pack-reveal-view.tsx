@@ -1,82 +1,144 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { RevealSlotCard } from "./reveal-slot-card";
 import { usePackReveal } from "@/hooks/use-pack-reveal";
 import { useAuth } from "@/hooks/use-auth";
-import { formatDateTime, formatMoneyCents, formatTierLabel } from "@/lib/format";
+import { Button, buttonClassName } from "@/components/ui/button";
+import { CardImage } from "@/components/ui/card-image";
+import { CardShell } from "@/components/ui/card-shell";
+import { Chip } from "@/components/ui/chip";
+import { RarityBadge } from "@/components/ui/rarity-badge";
+import { StatTile } from "@/components/ui/stat-tile";
+import { formatMoneyCents, formatTierLabel } from "@/lib/format";
 import { ApiClientError, type PackCard } from "@/lib/api-client";
+import type { RarityTier } from "@/lib/types";
+import { routes } from "@/lib/routes";
+
+const RevealSlotCardAnimated = dynamic(
+  () => import("./reveal-slot-card-animated").then((module) => module.RevealSlotCardAnimated),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="min-h-[360px] rounded-pv-lg border border-pv-line bg-pv-surface-2" />
+    )
+  }
+);
+
+const RARITY_RANK: Record<RarityTier, number> = {
+  common: 0,
+  uncommon: 1,
+  rare: 2,
+  holo_rare: 3,
+  ultra_rare: 4,
+  chase: 5
+};
+
+function formatRelative(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  const deltaSec = Math.max(0, (Date.now() - parsed.getTime()) / 1000);
+  if (deltaSec < 60) return "just now";
+  if (deltaSec < 3600) return `${Math.floor(deltaSec / 60)}m ago`;
+  if (deltaSec < 86400) return `${Math.floor(deltaSec / 3600)}h ago`;
+  const days = Math.floor(deltaSec / 86400);
+  return days === 1 ? "yesterday" : `${days} days ago`;
+}
+
+function peakRarity(cards: PackCard[]): RarityTier | null {
+  if (cards.length === 0) return null;
+  return cards.reduce<RarityTier>((best, card) => {
+    return RARITY_RANK[card.rarityTier] > RARITY_RANK[best] ? card.rarityTier : best;
+  }, cards[0].rarityTier);
+}
 
 export function PackRevealView({ packId }: { packId: string }): JSX.Element {
   const router = useRouter();
-  const { user } = useAuth();
-  const [summaryOpen, setSummaryOpen] = useState(false);
-  const wasAllRevealedRef = useRef(false);
-  const { pack, loading, error, openPending, revealPendingSlot, slotOrder, revealedCardsBySlot, openPack, revealNext, revealSlot } =
-    usePackReveal(packId);
+  const { user, loading: authLoading } = useAuth();
+  const [packBurstActive, setPackBurstActive] = useState(false);
+  const burstTimerRef = useRef<number | null>(null);
+  const {
+    pack,
+    loading,
+    error,
+    openPending,
+    revealPendingSlot,
+    slotOrder,
+    revealedCardsBySlot,
+    openPack,
+    revealNext,
+    revealSlot
+  } = usePackReveal(packId);
 
-  const unrevealedCount = slotOrder.filter((slot) => !revealedCardsBySlot[slot]).length;
-  const canReveal = slotOrder.length > 0 && unrevealedCount > 0;
-  const allRevealed = Boolean(pack?.opened) && slotOrder.length > 0 && unrevealedCount === 0;
   const revealedCards = useMemo<PackCard[]>(
     () => slotOrder.map((slot) => revealedCardsBySlot[slot]).filter((card): card is PackCard => Boolean(card)),
     [slotOrder, revealedCardsBySlot]
   );
+  const unrevealedCount = slotOrder.filter((slot) => !revealedCardsBySlot[slot]).length;
+  const canReveal = slotOrder.length > 0 && unrevealedCount > 0;
+  const allRevealed = Boolean(pack?.opened) && slotOrder.length > 0 && unrevealedCount === 0;
   const totalPackMarketValue = useMemo(
     () => revealedCards.reduce((sum, card) => sum + card.pokemonCard.currentPrice, 0),
     [revealedCards]
   );
   const pricePaid = pack?.pricePaid ?? 0;
   const pnlAmount = totalPackMarketValue - pricePaid;
-  const pnlLabel = pnlAmount > 0 ? "Gain" : pnlAmount < 0 ? "Loss" : "Break-even";
   const pnlPositive = pnlAmount >= 0;
+  const pnlPct = pricePaid > 0 ? (pnlAmount / pricePaid) * 100 : 0;
+  const peak = peakRarity(revealedCards);
 
   useEffect(() => {
-    setSummaryOpen(false);
-    wasAllRevealedRef.current = false;
+    setPackBurstActive(false);
   }, [packId]);
 
   useEffect(() => {
-    if (allRevealed && !wasAllRevealedRef.current) {
-      setSummaryOpen(true);
-    }
-    wasAllRevealedRef.current = allRevealed;
-  }, [allRevealed]);
-
-  useEffect(() => {
-    if (!summaryOpen) {
-      return;
-    }
-
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        setSummaryOpen(false);
+    return () => {
+      if (burstTimerRef.current !== null) {
+        window.clearTimeout(burstTimerRef.current);
       }
     };
+  }, []);
 
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [summaryOpen]);
+  const triggerPackBurst = (): void => {
+    setPackBurstActive(true);
+    if (burstTimerRef.current !== null) {
+      window.clearTimeout(burstTimerRef.current);
+    }
+    burstTimerRef.current = window.setTimeout(() => {
+      setPackBurstActive(false);
+      burstTimerRef.current = null;
+    }, 500);
+  };
 
   const onOpen = async (): Promise<void> => {
     try {
       await openPack();
+      triggerPackBurst();
     } catch (err) {
       if (err instanceof ApiClientError && err.status === 401) {
-        router.push("/login");
+        router.push(routes.auth.login);
       }
     }
   };
 
-  if (!user && !loading) {
+  const onAutoReveal = async (): Promise<void> => {
+    const pending = slotOrder.filter((slot) => !revealedCardsBySlot[slot]);
+    for (const slot of pending) {
+      try {
+        await revealSlot(slot);
+      } catch {
+        break;
+      }
+    }
+  };
+
+  if (!authLoading && !user && !loading) {
     return (
-      <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm font-medium text-amber-800">
+      <section className="rounded-pv-lg border border-pv-warn/28 bg-[rgba(245,158,11,0.06)] p-5 text-sm font-medium text-pv-warn">
         Login is required to access pack reveals.{" "}
-        <Link href="/login" className="font-bold underline">
+        <Link href={routes.auth.login} className="font-bold underline">
           Sign in
         </Link>
         .
@@ -84,179 +146,201 @@ export function PackRevealView({ packId }: { packId: string }): JSX.Element {
     );
   }
 
+  const crumbParts = pack
+    ? [formatTierLabel(pack.tier), `Pack #${pack.id.slice(0, 8)}`, formatRelative(pack.purchasedAt)]
+    : [];
+
   return (
-    <section>
-      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-black text-slate-950">Pack Reveal</h1>
-          <p className="mt-1 text-sm text-slate-600">Reveal each slot in sequence to preserve tension.</p>
-        </div>
-        <Link
-          href="/drops"
-          className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-500 hover:bg-slate-50"
-        >
-          Back to drops
+    <section className="space-y-5">
+      {/* BACK BREADCRUMB */}
+      <div className="flex items-center gap-3 text-[12px]">
+        <Link href={routes.packs.index} className="text-pv-muted hover:text-pv-text">
+          ← My packs
         </Link>
+        {pack ? (
+          <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+            Reveal · #{pack.id.slice(0, 8)}
+          </span>
+        ) : null}
       </div>
 
-      {loading ? <p className="text-sm font-medium text-slate-600">Loading pack...</p> : null}
-      {error ? <p className="rounded-xl bg-rose-50 p-3 text-sm font-medium text-rose-700">{error}</p> : null}
-
-      {pack ? (
-        <div className="space-y-5">
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-lg font-black text-slate-900">Pack {pack.id.slice(0, 8)}</h2>
-              <p className="text-sm font-semibold text-slate-600">{formatTierLabel(pack.tier)}</p>
-            </div>
-            <div className="mt-4 grid gap-2 sm:grid-cols-4">
-              <div className="rounded-xl bg-slate-100 p-3">
-                <p className="text-xs uppercase tracking-wide text-slate-500">Paid</p>
-                <p className="text-lg font-black text-slate-900">{formatMoneyCents(pack.pricePaid)}</p>
-              </div>
-              <div className="rounded-xl bg-slate-100 p-3">
-                <p className="text-xs uppercase tracking-wide text-slate-500">Purchased</p>
-                <p className="text-sm font-bold text-slate-900">{formatDateTime(pack.purchasedAt)}</p>
-              </div>
-              <div className="rounded-xl bg-slate-100 p-3">
-                <p className="text-xs uppercase tracking-wide text-slate-500">Opened</p>
-                <p className="text-sm font-bold text-slate-900">{pack.openedAt ? formatDateTime(pack.openedAt) : "Not yet"}</p>
-              </div>
-              <div className="rounded-xl bg-slate-100 p-3">
-                <p className="text-xs uppercase tracking-wide text-slate-500">Unrevealed</p>
-                <p className="text-lg font-black text-slate-900">{unrevealedCount}</p>
-              </div>
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              {!pack.opened ? (
-                <button
-                  type="button"
-                  onClick={() => void onOpen()}
-                  disabled={openPending}
-                  className={`rounded-xl px-4 py-2 text-sm font-bold transition ${
-                    openPending
-                      ? "cursor-not-allowed bg-slate-200 text-slate-500"
-                      : "bg-slate-900 text-white hover:bg-slate-700"
-                  }`}
-                >
-                  {openPending ? "Opening..." : "Open Pack"}
-                </button>
-              ) : null}
-
-              {pack.opened ? (
-                <button
-                  type="button"
-                  onClick={() => void revealNext()}
-                  disabled={!canReveal || revealPendingSlot !== null}
-                  className={`rounded-xl px-4 py-2 text-sm font-bold transition ${
-                    !canReveal || revealPendingSlot !== null
-                      ? "cursor-not-allowed bg-slate-200 text-slate-500"
-                      : "bg-rose-600 text-white hover:bg-rose-700"
-                  }`}
-                >
-                  {revealPendingSlot !== null ? "Revealing..." : canReveal ? "Reveal Next Slot" : "All Revealed"}
-                </button>
-              ) : null}
-
-              {allRevealed ? (
-                <button
-                  type="button"
-                  onClick={() => setSummaryOpen(true)}
-                  className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-800 transition hover:border-slate-500 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
-                >
-                  View Summary
-                </button>
-              ) : null}
-            </div>
-          </section>
-
-          {pack.opened ? (
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {slotOrder.map((slot) => (
-                <RevealSlotCard
-                  key={slot}
-                  slotNumber={slot}
-                  card={revealedCardsBySlot[slot]}
-                  pending={revealPendingSlot === slot}
-                  onReveal={() => void revealSlot(slot)}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-600">
-              Open the pack to initialize reveal slots.
-            </div>
-          )}
-        </div>
+      {loading ? <p className="text-sm font-medium text-pv-muted">Loading pack…</p> : null}
+      {error ? (
+        <p
+          role="alert"
+          className="rounded-pv-sm border border-pv-accent/30 bg-[rgba(239,68,68,0.08)] p-3 text-sm font-medium text-[#fca5a5]"
+        >
+          {error}
+        </p>
       ) : null}
 
-      {summaryOpen && pack && allRevealed ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="pack-summary-title"
-        >
-          <section className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 id="pack-summary-title" className="text-xl font-black text-slate-950">
-                  Pack Summary
-                </h2>
-                <p className="mt-1 text-sm text-slate-600">All cards revealed. Here is your final result.</p>
+      {pack ? (
+        <>
+          {/* SUMMARY CARD */}
+          <section className="relative overflow-hidden rounded-pv-lg border border-pv-line bg-pv-surface-2 p-5">
+            {packBurstActive ? (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 z-10 animate-pv-pulse bg-gradient-to-r from-transparent via-pv-gold/10 to-transparent"
+              />
+            ) : null}
+            <div className="relative z-20">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                    {crumbParts.join(" · ")}
+                  </p>
+                  <h1 id="pack-reveal-heading" className="mt-1 text-pv-h1">
+                    Your pack
+                  </h1>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Link
+                    href={routes.fairness.verify(pack.id)}
+                    className={buttonClassName({ variant: "ghost", size: "sm" })}
+                  >
+                    Verify this pack
+                  </Link>
+                  {pack.opened ? (
+                    <Chip tone={allRevealed ? "info" : "upcoming"}>
+                      {allRevealed
+                        ? `Opened · ${slotOrder.length} / ${slotOrder.length} revealed`
+                        : `Opened · ${slotOrder.length - unrevealedCount} / ${slotOrder.length} revealed`}
+                    </Chip>
+                  ) : (
+                    <Chip tone="gold">Sealed</Chip>
+                  )}
+                </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setSummaryOpen(false)}
-                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-500 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
-              >
-                Close
-              </button>
-            </div>
 
-            <div className="mt-4 grid gap-2 sm:grid-cols-3">
-              <div className="rounded-xl bg-slate-100 p-3">
-                <p className="text-xs uppercase tracking-wide text-slate-500">Price Paid</p>
-                <p className="text-lg font-black text-slate-900">{formatMoneyCents(pricePaid)}</p>
-              </div>
-              <div className="rounded-xl bg-slate-100 p-3">
-                <p className="text-xs uppercase tracking-wide text-slate-500">Total Pack Value</p>
-                <p className="text-lg font-black text-slate-900">{formatMoneyCents(totalPackMarketValue)}</p>
-              </div>
-              <div className={`rounded-xl p-3 ${pnlPositive ? "bg-emerald-100" : "bg-rose-100"}`}>
-                <p className={`text-xs uppercase tracking-wide ${pnlPositive ? "text-emerald-700" : "text-rose-700"}`}>
-                  {pnlLabel}
-                </p>
-                <p className={`text-lg font-black ${pnlPositive ? "text-emerald-900" : "text-rose-900"}`}>
-                  {pnlAmount > 0 ? "+" : pnlAmount < 0 ? "-" : ""}
-                  {formatMoneyCents(Math.abs(pnlAmount))}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-5">
-              <h3 className="text-sm font-bold uppercase tracking-wide text-slate-600">All Cards</h3>
-              <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                {revealedCards.map((card) => (
-                  <div key={card.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm font-bold text-slate-900">{card.pokemonCard.name}</p>
-                      <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[11px] font-bold uppercase text-white">
-                        {card.rarityTier}
+              {pack.opened ? (
+                <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  <StatTile
+                    label="Paid"
+                    value={formatMoneyCents(pricePaid)}
+                    valueClassName="text-[20px]"
+                  />
+                  <StatTile
+                    label="Total value"
+                    value={formatMoneyCents(totalPackMarketValue)}
+                    valueClassName="text-[20px]"
+                  />
+                  <StatTile
+                    label="P&L"
+                    tone={pnlPositive ? "good" : "bad"}
+                    value={
+                      <span className={pnlPositive ? "text-pv-good" : "text-pv-accent"}>
+                        {pnlAmount > 0 ? "+" : pnlAmount < 0 ? "-" : ""}
+                        {formatMoneyCents(Math.abs(pnlAmount))}
                       </span>
-                    </div>
-                    <p className="mt-1 text-xs text-slate-600">{card.pokemonCard.setName}</p>
-                    <div className="mt-2 flex items-center justify-between text-sm">
-                      <span className="font-medium text-slate-600">Market</span>
-                      <span className="font-bold text-slate-900">{formatMoneyCents(card.pokemonCard.currentPrice)}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                    }
+                    valueClassName="text-[20px]"
+                    delta={pricePaid > 0 ? `${pnlAmount >= 0 ? "+" : ""}${pnlPct.toFixed(0)}%` : undefined}
+                  />
+                  <StatTile
+                    label="Rarity peak"
+                    value={peak ? <RarityBadge rarity={peak} /> : <span className="text-pv-muted">—</span>}
+                    valueClassName="text-[14px]"
+                  />
+                </div>
+              ) : (
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="gold"
+                    loading={openPending}
+                    onClick={() => void onOpen()}
+                  >
+                    {openPending ? "Opening…" : "Open pack"}
+                  </Button>
+                  <p className="text-[12px] text-pv-muted">
+                    Opening commits the pack and reveals the first slot options.
+                  </p>
+                </div>
+              )}
             </div>
           </section>
-        </div>
+
+          {/* SLOTS */}
+          {pack.opened ? (
+            <section>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-pv-h2">Slots</h2>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={!canReveal || revealPendingSlot !== null}
+                    onClick={() => void onAutoReveal()}
+                  >
+                    Auto-reveal remaining
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="sm"
+                    disabled={!canReveal || revealPendingSlot !== null}
+                    loading={revealPendingSlot !== null}
+                    onClick={() => void revealNext()}
+                  >
+                    {canReveal ? "Reveal next slot" : "All revealed"}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {slotOrder.map((slot) => (
+                  <RevealSlotCardAnimated
+                    key={slot}
+                    slotNumber={slot}
+                    card={revealedCardsBySlot[slot]}
+                    pending={revealPendingSlot === slot}
+                    onReveal={async () => {
+                      await revealSlot(slot);
+                    }}
+                  />
+                ))}
+              </div>
+            </section>
+          ) : (
+            <div className="rounded-pv-lg border border-pv-line bg-pv-surface-2 p-5 text-sm text-pv-muted">
+              Open the pack to initialise reveal slots.
+            </div>
+          )}
+
+          {/* WHAT NEXT */}
+          {pack.opened ? (
+            <CardShell
+              variant="surface"
+              tone="default"
+              header={
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-pv-h3">What next?</div>
+                    <p className="mt-0.5 text-[12px] text-pv-muted">
+                      Keep them, list on marketplace, or auction the chase.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link
+                      href={routes.collection.index}
+                      className={buttonClassName({ variant: "secondary", size: "sm" })}
+                    >
+                      View in collection
+                    </Link>
+                    <Link
+                      href={routes.marketplace.index}
+                      className={buttonClassName({ variant: "primary", size: "sm" })}
+                    >
+                      List on marketplace
+                    </Link>
+                  </div>
+                </div>
+              }
+            />
+          ) : null}
+        </>
       ) : null}
     </section>
   );

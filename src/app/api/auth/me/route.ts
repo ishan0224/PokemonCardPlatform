@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { type NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/server/middleware/auth";
 import { handleRouteError } from "@/server/http/api";

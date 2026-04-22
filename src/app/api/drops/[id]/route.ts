@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import { handleRouteError, requireUuid } from "@/server/http/api";
 import { getDrop } from "@/server/services/drop.service";

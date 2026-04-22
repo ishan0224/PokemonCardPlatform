@@ -1,56 +1,43 @@
+import Link from "next/link";
 import type { IntegrityChecks } from "@/lib/types";
+import { routes } from "@/lib/routes";
 
 type IntegrityListProps = {
   integrity: IntegrityChecks;
 };
 
-const STATUS_STYLES = {
-  pass: {
-    card: "border-emerald-200 bg-emerald-50",
-    label: "text-emerald-700",
-    body: "text-slate-800",
-    icon: "text-emerald-600",
-    glyph: "✓"
-  },
-  warn: {
-    card: "border-amber-200 bg-amber-50",
-    label: "text-amber-700",
-    body: "text-slate-800",
-    icon: "text-amber-600",
-    glyph: "!"
-  },
-  fail: {
-    card: "border-rose-200 bg-rose-50",
-    label: "text-rose-700",
-    body: "text-rose-900",
-    icon: "text-rose-600",
-    glyph: "⨯"
-  }
+const STATUS_TONE = {
+  pass: "text-pv-good",
+  warn: "text-pv-warn",
+  fail: "text-pv-accent"
 } as const;
 
 export function IntegrityList({ integrity }: IntegrityListProps): JSX.Element {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-6">
-      <h2 className="text-sm font-bold uppercase tracking-widest text-slate-500">Integrity</h2>
-      <p className="mt-1 text-xs text-slate-500">Ledger checks run live against committed rows.</p>
+    <section className="h-full rounded-pv-lg border border-pv-line bg-pv-surface-2 p-5">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-pv-h3">Integrity</h2>
+        <span className="text-[11px] text-pv-muted">window</span>
+      </div>
 
-      <ul className="mt-4 space-y-2 text-sm">
+      <ul className="space-y-2 text-[12px]">
         {integrity.checks.map((check) => {
-          const style = STATUS_STYLES[check.status];
+          const tone = STATUS_TONE[check.status];
           return (
-            <li
-              key={check.key}
-              className={`flex items-center justify-between rounded-lg border px-3 py-2 ${style.card}`}
-            >
-              <div>
-                <div className={`font-mono text-[10px] uppercase tracking-wider ${style.label}`}>{check.label}</div>
-                <div className={style.body}>{check.detail}</div>
-              </div>
-              <span className={`text-lg tabular-nums ${style.icon}`}>{style.glyph}</span>
+            <li key={check.key} className="flex items-center justify-between gap-2">
+              <span className="text-pv-muted">{check.label}</span>
+              <span className={`font-bold tabular-nums ${tone}`}>{check.detail}</span>
             </li>
           );
         })}
       </ul>
+
+      <Link
+        href={routes.admin.auctionFlags}
+        className="mt-3 inline-block text-[12px] font-bold text-pv-muted hover:text-pv-text"
+      >
+        Open flag queue →
+      </Link>
     </section>
   );
 }

@@ -4,164 +4,139 @@ import {
   formatPlainPercentBps,
   formatSignedMoneyCents
 } from "@/lib/format";
-import { TIER_STYLES } from "./styles";
+import { RarityBadge } from "@/components/ui/rarity-badge";
+import type { RarityTier } from "@/lib/types";
 
 type PackTierTableProps = {
   tiers: PackTierEconomics[];
   portfolio: PackEconomicsBundle["portfolio"];
 };
 
-function marginSpreadBar(tier: PackTierEconomics): JSX.Element {
-  if (tier.worstMarginCents === null || tier.bestMarginCents === null || tier.packsPurchased === 0) {
-    return (
-      <div className="font-mono text-[10px] text-slate-500">
-        no packs purchased
-      </div>
-    );
-  }
+const TIER_RARITY: Record<string, RarityTier> = {
+  standard: "common",
+  premium: "rare",
+  elite: "chase"
+};
 
-  const negativeShare = tier.worstMarginCents < 0 ? 100 : 0;
-  const positiveShare = tier.bestMarginCents > 0 ? 100 - negativeShare : 0;
-
-  return (
-    <div>
-      <div className="font-mono text-[10px] text-slate-500">
-        worst <span className="text-rose-600">{formatSignedMoneyCents(tier.worstMarginCents)}</span> · best{" "}
-        <span className={tier.bestMarginCents >= 0 ? "text-emerald-600" : "text-amber-600"}>
-          {formatSignedMoneyCents(tier.bestMarginCents)}
-        </span>
-      </div>
-      <div className="mt-1 flex h-2 w-48 overflow-hidden rounded-full bg-slate-100">
-        {negativeShare > 0 ? <div className="bg-rose-500" style={{ width: `${negativeShare}%` }} /> : null}
-        {positiveShare > 0 ? <div className="bg-emerald-500" style={{ width: `${positiveShare}%` }} /> : null}
-      </div>
-    </div>
-  );
+function edgeDeltaBps(actual: number | null, target: number): number | null {
+  if (actual === null) return null;
+  return actual - target;
 }
 
-export function PackTierTable({ tiers, portfolio }: PackTierTableProps): JSX.Element {
+function winRateFromBundle(tier: PackTierEconomics): string {
+  // Proxy: share of price recovered by realised EV (no per-pack count exposed on the bundle).
+  if (tier.packsPurchased === 0 || tier.actualEvCents === null || tier.priceCents === 0) return "—";
+  const recovery = Math.min(100, Math.max(0, (tier.actualEvCents / tier.priceCents) * 100));
+  return `${recovery.toFixed(1)}%`;
+}
+
+function marginPer1kLabel(tier: PackTierEconomics): string {
+  if (tier.packsPurchased === 0) return "—";
+  const per1k = (tier.sigmaMarginCents / tier.packsPurchased) * 1000;
+  return formatMoneyCents(Math.abs(Math.round(per1k)));
+}
+
+export function PackTierTable({ tiers, portfolio: _portfolio }: PackTierTableProps): JSX.Element {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white">
-      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 p-6">
-        <div>
-          <h2 className="text-sm font-bold uppercase tracking-widest text-slate-500">Pack tier profitability</h2>
-          <p className="mt-1 text-xs text-slate-500">
-            Theoretical EV = rarity weights × live card anchors. Actual EV = mean <span className="font-mono">price − pack_margin</span> per purchased pack.
-            House edge = (price − EV) / price.
-          </p>
-        </div>
+    <section className="overflow-hidden rounded-pv-lg border border-pv-line bg-pv-surface-2">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+        <h2 className="text-pv-h3">Pack tiers · window</h2>
+        <span className="text-[12px] text-pv-muted">
+          Target edge from <span className="font-mono">TARGET_HOUSE_EDGE_BPS</span>
+        </span>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full text-[13px]">
           <thead>
-            <tr className="font-mono text-left text-[10px] uppercase tracking-wider text-slate-500">
-              <th className="px-6 py-3 font-medium">Tier</th>
-              <th className="px-4 py-3 text-right font-medium">Price</th>
-              <th className="px-4 py-3 text-right font-medium">Packs</th>
-              <th className="px-4 py-3 text-right font-medium">Theoretical EV</th>
-              <th className="px-4 py-3 text-right font-medium">Actual EV</th>
-              <th className="px-4 py-3 text-right font-medium">Theo. edge</th>
-              <th className="px-4 py-3 text-right font-medium">Actual edge</th>
-              <th className="px-4 py-3 font-medium">Margin spread</th>
-              <th className="px-4 py-3 text-right font-medium">Σ margin</th>
+            <tr className="text-left text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+              <th className="border-b border-pv-line px-4 py-3">Tier</th>
+              <th className="border-b border-pv-line px-4 py-3 text-right">Price</th>
+              <th className="border-b border-pv-line px-4 py-3 text-right">Packs</th>
+              <th className="border-b border-pv-line px-4 py-3 text-right">Mean EV</th>
+              <th className="border-b border-pv-line px-4 py-3 text-right">Win rate</th>
+              <th className="border-b border-pv-line px-4 py-3 text-right">Target edge</th>
+              <th className="border-b border-pv-line px-4 py-3 text-right">Achieved</th>
+              <th className="border-b border-pv-line px-4 py-3 text-right">Δ (bps)</th>
+              <th className="border-b border-pv-line px-4 py-3 text-right">Margin / 1k</th>
             </tr>
           </thead>
           <tbody className="tabular-nums">
-            {tiers.map((tier, index) => {
-              const style = TIER_STYLES[tier.tier];
-              const rowClass = index % 2 === 0 ? "" : "bg-slate-50/60";
-              const actualEdgeClass =
+            {tiers.map((tier) => {
+              const deltaBps = edgeDeltaBps(tier.actualHouseEdgeBps, tier.targetHouseEdgeBps);
+              const isIncident = deltaBps !== null && deltaBps < 0 && Math.abs(deltaBps) > 200;
+              const achievedClass =
                 tier.actualHouseEdgeBps === null
-                  ? "text-slate-500"
-                  : tier.actualHouseEdgeBps < 0
-                  ? "text-rose-600"
-                  : tier.actualHouseEdgeBps < tier.targetHouseEdgeBps / 2
-                  ? "text-amber-600"
-                  : "text-emerald-600";
+                  ? "text-pv-muted"
+                  : tier.actualHouseEdgeBps >= tier.targetHouseEdgeBps - 50
+                    ? "text-pv-good"
+                    : "text-pv-accent";
+              const deltaClass =
+                deltaBps === null
+                  ? "text-pv-muted"
+                  : deltaBps >= 0
+                    ? "text-pv-muted"
+                    : "text-pv-accent";
+              const marginClass =
+                tier.sigmaMarginCents < 0
+                  ? "text-pv-accent"
+                  : tier.actualHouseEdgeBps !== null && tier.actualHouseEdgeBps >= tier.targetHouseEdgeBps - 50
+                    ? "text-pv-gold"
+                    : "text-pv-text";
               return (
-                <tr key={tier.tier} className={`border-t border-slate-100 ${rowClass}`}>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className={`h-8 w-6 rounded-sm bg-gradient-to-br ${style.gradientClass}`} />
-                      <div>
-                        <div className="font-semibold text-slate-900">{tier.displayName}</div>
-                        <div className="font-mono text-[10px] uppercase tracking-wider text-slate-500">
-                          target {formatPlainPercentBps(tier.targetHouseEdgeBps)}
-                        </div>
-                        <div className="font-mono text-[10px] uppercase tracking-wider text-slate-500">
-                          anchors {tier.anchorSource}
-                          {tier.anchorFallbackRarities && tier.anchorFallbackRarities.length > 0
-                            ? ` (${tier.anchorFallbackRarities.join(",")})`
-                            : ""}
-                        </div>
-                      </div>
-                    </div>
+                <tr
+                  key={tier.tier}
+                  className={`border-b border-pv-line last:border-b-0 ${
+                    isIncident ? "bg-[rgba(239,68,68,0.05)]" : ""
+                  }`}
+                >
+                  <td className="px-4 py-3">
+                    <RarityBadge rarity={TIER_RARITY[tier.tier] ?? "common"} compact className="mr-2" />
+                    <span className="font-semibold text-pv-text">{tier.displayName}</span>
                   </td>
-                  <td className="px-4 py-4 text-right">{formatMoneyCents(tier.priceCents)}</td>
-                  <td className="px-4 py-4 text-right">{tier.packsPurchased}</td>
-                  <td className="px-4 py-4 text-right">{formatMoneyCents(tier.theoreticalEvCents)}</td>
-                  <td className="px-4 py-4 text-right">
+                  <td className="px-4 py-3 text-right text-pv-text">
+                    {formatMoneyCents(tier.priceCents)}
+                  </td>
+                  <td className="px-4 py-3 text-right text-pv-text">
+                    {tier.packsPurchased.toLocaleString()}
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono text-pv-text">
                     {tier.actualEvCents === null ? "—" : formatMoneyCents(tier.actualEvCents)}
                   </td>
-                  <td className="px-4 py-4 text-right text-slate-700">
-                    {formatPlainPercentBps(tier.theoreticalHouseEdgeBps)}
+                  <td className="px-4 py-3 text-right text-pv-text">{winRateFromBundle(tier)}</td>
+                  <td className="px-4 py-3 text-right text-pv-text">
+                    {formatPlainPercentBps(tier.targetHouseEdgeBps)}
                   </td>
-                  <td className={`px-4 py-4 text-right font-semibold ${actualEdgeClass}`}>
-                    {tier.actualHouseEdgeBps === null ? "—" : formatPlainPercentBps(tier.actualHouseEdgeBps)}
+                  <td className={`px-4 py-3 text-right font-semibold ${achievedClass}`}>
+                    {tier.actualHouseEdgeBps === null
+                      ? "—"
+                      : formatPlainPercentBps(tier.actualHouseEdgeBps)}
                   </td>
-                  <td className="px-4 py-4">{marginSpreadBar(tier)}</td>
-                  <td
-                    className={`px-4 py-4 text-right font-semibold ${
-                      tier.sigmaMarginCents < 0 ? "text-rose-600" : tier.sigmaMarginCents > 0 ? "text-emerald-600" : "text-slate-600"
-                    }`}
-                  >
-                    {formatSignedMoneyCents(tier.sigmaMarginCents)}
+                  <td className={`px-4 py-3 text-right font-semibold ${deltaClass}`}>
+                    {deltaBps === null
+                      ? "—"
+                      : `${deltaBps >= 0 ? "+" : ""}${Math.round(deltaBps)}`}
+                  </td>
+                  <td className={`px-4 py-3 text-right font-extrabold ${marginClass}`}>
+                    {tier.packsPurchased === 0
+                      ? "—"
+                      : `${tier.sigmaMarginCents < 0 ? "−" : ""}${marginPer1kLabel(tier)}`}
                   </td>
                 </tr>
               );
             })}
-
-            <tr className="border-t-2 border-slate-200 bg-slate-50">
-              <td className="px-6 py-4 font-semibold">Portfolio</td>
-              <td className="px-4 py-4 text-right text-slate-500">—</td>
-              <td className="px-4 py-4 text-right font-semibold">{portfolio.packsPurchased}</td>
-              <td className="px-4 py-4 text-right text-slate-500">—</td>
-              <td className="px-4 py-4 text-right text-slate-500">—</td>
-              <td className="px-4 py-4 text-right text-slate-700">
-                {formatPlainPercentBps(portfolio.theoreticalHouseEdgeBps)}
-              </td>
-              <td
-                className={`px-4 py-4 text-right font-bold ${
-                  portfolio.actualHouseEdgeBps === null
-                    ? "text-slate-500"
-                    : portfolio.actualHouseEdgeBps < 0
-                    ? "text-rose-600"
-                    : "text-emerald-600"
-                }`}
-              >
-                {portfolio.actualHouseEdgeBps === null ? "—" : formatPlainPercentBps(portfolio.actualHouseEdgeBps)}
-              </td>
-              <td className="px-4 py-4 font-mono text-[10px] uppercase tracking-wider text-slate-500">
-                {portfolio.sigmaMarginCents < 0 ? "losing money" : portfolio.sigmaMarginCents > 0 ? "sustainable" : "—"}
-              </td>
-              <td
-                className={`px-4 py-4 text-right font-black ${
-                  portfolio.sigmaMarginCents < 0 ? "text-rose-600" : portfolio.sigmaMarginCents > 0 ? "text-emerald-600" : "text-slate-600"
-                }`}
-              >
-                {formatSignedMoneyCents(portfolio.sigmaMarginCents)}
-              </td>
-            </tr>
           </tbody>
         </table>
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 bg-slate-50 px-6 py-3 text-[11px] text-slate-500">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-pv-line px-4 py-3 text-[11px] text-pv-muted">
         <span>
           {tiers.filter((tier) => tier.packsPurchased > 0 && tier.sigmaMarginCents >= 0).length} of{" "}
           {tiers.filter((tier) => tier.packsPurchased > 0).length} tiers profitable.
         </span>
-        <span className="font-mono">source · platform_revenue ⋈ packs ⋈ pokemon_cards</span>
+        <span className="font-mono text-pv-muted-2">
+          source · platform_revenue ⋈ packs ⋈ pokemon_cards
+        </span>
       </div>
     </section>
   );
 }
+

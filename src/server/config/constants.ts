@@ -32,6 +32,32 @@ function resolveIntegerEnv(value: string | undefined, defaultValue: number): num
   return normalized > 0 ? normalized : defaultValue;
 }
 
+function resolveOptionalStringEnv(value: string | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function resolveStringArrayEnv(value: string | undefined, defaultValues: string[]): string[] {
+  if (typeof value !== "string") {
+    return defaultValues;
+  }
+
+  const normalized = value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  if (normalized.length === 0) {
+    return defaultValues;
+  }
+
+  return Array.from(new Set(normalized));
+}
+
 function resolvePriceSelectionModeEnv(
   value: string | undefined,
   defaultValue: PriceSelectionMode
@@ -129,6 +155,19 @@ export const PRICE_REFRESH_ILLIQUID_MIN_SECONDS = resolveIntegerEnv(process.env.
 export const PRICE_REFRESH_ILLIQUID_MAX_SECONDS = resolveIntegerEnv(process.env.PRICE_REFRESH_ILLIQUID_MAX_SECONDS, 86_400);
 export const AUCTION_CLOSER_INTERVAL_MS = 5 * 1000;
 export const DROP_SCHEDULER_INTERVAL_MS = 10 * 1000;
+export const DROP_INVENTORY_RECONCILE_ENABLED = resolveBooleanEnv(
+  process.env.DROP_INVENTORY_RECONCILE_ENABLED,
+  true
+);
+export const DROP_INVENTORY_RECONCILE_INTERVAL_MS = resolveIntegerEnv(
+  process.env.DROP_INVENTORY_RECONCILE_INTERVAL_MS,
+  5 * 60 * 1000
+);
+export const DROP_LOTTERY_CLOSER_ENABLED = resolveBooleanEnv(process.env.DROP_LOTTERY_CLOSER_ENABLED, true);
+export const DROP_LOTTERY_RECONCILE_INTERVAL_MS = resolveIntegerEnv(
+  process.env.DROP_LOTTERY_RECONCILE_INTERVAL_MS,
+  2_000
+);
 export const MARKETPLACE_EVENTS_CHANNEL = "marketplace_events";
 export const AUCTION_EVENTS_CHANNEL = "auction_events";
 export const BALANCE_EVENTS_CHANNEL = "balance_events";
@@ -137,20 +176,95 @@ export const PRICE_UPDATES_LEGACY_CHANNEL = "price_events";
 export const AUCTIONS_LIST_COALESCING_ENABLED = resolveBooleanEnv(process.env.AUCTIONS_LIST_COALESCING_ENABLED, false);
 export const AUCTIONS_LIST_COALESCE_WINDOW_MS = resolveIntegerEnv(process.env.AUCTIONS_LIST_COALESCE_WINDOW_MS, 300);
 export const AUCTIONS_LIST_COALESCE_MAX_BUFFER = resolveIntegerEnv(process.env.AUCTIONS_LIST_COALESCE_MAX_BUFFER, 500);
+export const ADMIN_METRICS_COALESCING_ENABLED = resolveBooleanEnv(
+  process.env.ADMIN_METRICS_COALESCING_ENABLED,
+  true
+);
+export const ADMIN_METRICS_COALESCE_WINDOW_MS = resolveIntegerEnv(
+  process.env.ADMIN_METRICS_COALESCE_WINDOW_MS,
+  500
+);
+export const ADMIN_METRICS_COALESCE_MAX_BUFFER = resolveIntegerEnv(
+  process.env.ADMIN_METRICS_COALESCE_MAX_BUFFER,
+  200
+);
+export const FAIRNESS_AUDITOR_ENABLED = resolveBooleanEnv(process.env.FAIRNESS_AUDITOR_ENABLED, true);
+export const FAIRNESS_AUDITOR_INTERVAL_MS = resolveIntegerEnv(
+  process.env.FAIRNESS_AUDITOR_INTERVAL_MS,
+  24 * 60 * 60 * 1000
+);
+export const PUBLIC_FAIRNESS_AUDIT_RATE_LIMIT_PER_IP = {
+  limit: resolveIntegerEnv(process.env.PUBLIC_FAIRNESS_AUDIT_RATE_LIMIT_LIMIT, 30),
+  windowSeconds: resolveIntegerEnv(process.env.PUBLIC_FAIRNESS_AUDIT_RATE_LIMIT_WINDOW_SECONDS, 60)
+} as const;
+export const PUBLIC_FAIRNESS_AUDIT_CACHE_TTL_SECONDS = resolveIntegerEnv(
+  process.env.PUBLIC_FAIRNESS_AUDIT_CACHE_TTL_SECONDS,
+  300
+);
 
 export const RATE_LIMITS = {
   packPurchasePerUser: { limit: 5, windowSeconds: 10 },
   packPurchasePerIp: { limit: 5, windowSeconds: 10 },
   placeBid: { limit: 10, windowSeconds: 10 },
   placeBidPerAuctionPerUser: { limit: 3, windowSeconds: 10 },
-  buyListing: { limit: 5, windowSeconds: 10 }
+  buyListing: { limit: 5, windowSeconds: 10 },
+  fairnessMyPacks: { limit: 12, windowSeconds: 10 }
 } as const;
+
+export const GLOBAL_API_RATE_LIMIT_ENABLED = resolveBooleanEnv(process.env.GLOBAL_API_RATE_LIMIT_ENABLED, false);
+export const GLOBAL_API_RATE_LIMIT_PER_IP = {
+  limit: resolveIntegerEnv(process.env.GLOBAL_API_RATE_LIMIT_PER_IP_LIMIT, 300),
+  windowSeconds: resolveIntegerEnv(process.env.GLOBAL_API_RATE_LIMIT_PER_IP_WINDOW_SECONDS, 60)
+} as const;
+export const GLOBAL_API_RATE_LIMIT_PER_USER = {
+  limit: resolveIntegerEnv(process.env.GLOBAL_API_RATE_LIMIT_PER_USER_LIMIT, 600),
+  windowSeconds: resolveIntegerEnv(process.env.GLOBAL_API_RATE_LIMIT_PER_USER_WINDOW_SECONDS, 60)
+} as const;
+export const GLOBAL_API_RATE_LIMIT_EXEMPT_PATHS = resolveStringArrayEnv(
+  process.env.GLOBAL_API_RATE_LIMIT_EXEMPT_PATHS,
+  ["/api/auth/refresh", "/socket.io"]
+);
+
+export const AUTO_REBALANCE_ENABLED = resolveBooleanEnv(process.env.AUTO_REBALANCE_ENABLED, false);
+export const AUTO_REBALANCE_DRIFT_THRESHOLD_BPS = resolveIntegerEnv(
+  process.env.AUTO_REBALANCE_DRIFT_THRESHOLD_BPS,
+  500
+);
+export const AUTO_REBALANCE_DEBOUNCE_MS = resolveIntegerEnv(process.env.AUTO_REBALANCE_DEBOUNCE_MS, 120_000);
+export const AUTO_REBALANCE_MIN_INTERVAL_MS = resolveIntegerEnv(
+  process.env.AUTO_REBALANCE_MIN_INTERVAL_MS,
+  1_800_000
+);
+export const AUTO_REBALANCE_DRIFT_SAMPLE_MAX_CARDS = resolveIntegerEnv(
+  process.env.AUTO_REBALANCE_DRIFT_SAMPLE_MAX_CARDS,
+  500
+);
+
+export const FINAL_WINDOW_GATE_ENABLED = resolveBooleanEnv(process.env.FINAL_WINDOW_GATE_ENABLED, true);
+export const FINAL_WINDOW_PCT = resolveIntegerEnv(process.env.FINAL_WINDOW_PCT, 10);
+export const FINAL_WINDOW_MIN_SECONDS = resolveIntegerEnv(process.env.FINAL_WINDOW_MIN_SECONDS, 60);
+export const FINAL_WINDOW_THROTTLE_PER_USER_LIMIT = resolveIntegerEnv(
+  process.env.FINAL_WINDOW_THROTTLE_PER_USER_LIMIT,
+  1
+);
+export const FINAL_WINDOW_THROTTLE_WINDOW_MS = resolveIntegerEnv(
+  process.env.FINAL_WINDOW_THROTTLE_WINDOW_MS,
+  10_000
+);
 
 // Phase 5 B3 fat-finger cap absolute floor ($10 in cents) — per source plan §5.
 export const FAT_FINGER_ABSOLUTE_FLOOR_CENTS = 1_000;
 
 export const ECONOMICS_DEFAULT_WINDOW_HOURS = resolveIntegerEnv(process.env.ECONOMICS_DEFAULT_WINDOW_HOURS, 24);
 export const ECONOMICS_MAX_WINDOW_DAYS = resolveIntegerEnv(process.env.ECONOMICS_MAX_WINDOW_DAYS, 31);
+export const REVENUE_PROJECTION_WINDOW_DAYS = resolveIntegerEnv(
+  process.env.REVENUE_PROJECTION_WINDOW_DAYS,
+  7
+);
+export const REVENUE_PROJECTION_HORIZON_DAYS = resolveIntegerEnv(
+  process.env.REVENUE_PROJECTION_HORIZON_DAYS,
+  30
+);
 
 export const RARITY_ANCHOR_FALLBACK_CENTS: Record<RarityTier, number> = {
   common: 5,
@@ -176,3 +290,23 @@ export const ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS = resolveIntegerEnv(
   process.env.ECONOMICS_INCIDENT_HOUSE_EDGE_DELTA_BPS,
   1_000
 );
+
+export const ECONOMICS_ALERTS_ENABLED = resolveBooleanEnv(process.env.ECONOMICS_ALERTS_ENABLED, true);
+export const ECONOMICS_ALERT_DEDUP_WINDOW_MS = resolveIntegerEnv(
+  process.env.ECONOMICS_ALERT_DEDUP_WINDOW_MS,
+  900_000
+);
+export const ECONOMICS_ALERT_WEBHOOK_URL = resolveOptionalStringEnv(process.env.ECONOMICS_ALERT_WEBHOOK_URL);
+export const ECONOMICS_ALERT_WEBHOOK_SECRET = resolveOptionalStringEnv(process.env.ECONOMICS_ALERT_WEBHOOK_SECRET);
+export const ECONOMICS_ALERT_WEBHOOK_TIMEOUT_MS = resolveIntegerEnv(
+  process.env.ECONOMICS_ALERT_WEBHOOK_TIMEOUT_MS,
+  3_000
+);
+
+export function validateEconomicsAlertWebhookConfig(): void {
+  if (ECONOMICS_ALERT_WEBHOOK_URL && !ECONOMICS_ALERT_WEBHOOK_SECRET) {
+    throw new Error(
+      "ECONOMICS_ALERT_WEBHOOK_SECRET must be set when ECONOMICS_ALERT_WEBHOOK_URL is configured."
+    );
+  }
+}

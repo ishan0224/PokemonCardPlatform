@@ -1,8 +1,11 @@
+export const dynamic = "force-dynamic";
+
 import { type NextRequest, NextResponse } from "next/server";
 import { handleRouteError, readJsonBody, requireUuid } from "@/server/http/api";
 import { requireAdmin } from "@/server/middleware/admin";
 import {
   createAuctionFlag,
+  mapAuctionFlagRowWithLegacyAliases,
   parseAuctionFlagCreateBody
 } from "@/server/services/auction-flag.service";
 
@@ -22,7 +25,7 @@ export async function POST(
       evidence: body.evidence
     });
 
-    return NextResponse.json({ flag }, { status: 201 });
+    return NextResponse.json({ flag: mapAuctionFlagRowWithLegacyAliases(flag) }, { status: 201 });
   } catch (error) {
     return handleRouteError(error);
   }

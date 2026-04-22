@@ -6,12 +6,19 @@ import {
 } from "../redis/client";
 import { query } from "../db/pool";
 import { RARITY_TIERS } from "../../lib/types";
-import type { CardState, RarityTier } from "../../lib/types";
+import type {
+  CardState,
+  CollectionCardTransaction,
+  CollectionCardTransactionType,
+  PackTier,
+  RarityTier
+} from "../../lib/types";
 
 export type CollectionSort = "newest" | "value_desc" | "value_asc" | "pnl_desc" | "pnl_asc";
 
 export type CollectionCardView = {
   id: string;
+  packId: string | null;
   ownerId: string;
   slotNumber: number;
   state: CardState;
@@ -54,6 +61,20 @@ export type CollectionListResult = {
   total: number;
 };
 
+export type CollectionCardDetailView = CollectionCardView & {
+  pnlPercent: number;
+  previousPrice: number;
+  acquiredAtIso: string;
+  activeAuctionId: string | null;
+  lineage: {
+    packId: string | null;
+    packTier: PackTier | null;
+    dropId: string | null;
+    dropName: string | null;
+  };
+  transactions: CollectionCardTransaction[];
+};
+
 const COLLECTION_SORT_SQL: Record<CollectionSort, string> = {
   newest: "c.created_at DESC",
   value_desc: "pc.current_price DESC, c.created_at DESC",
@@ -66,6 +87,7 @@ const RARITY_ORDER: readonly RarityTier[] = [...RARITY_TIERS];
 
 type CollectionRow = {
   card_id: string;
+  pack_id: string | null;
   owner_id: string;
   slot_number: number;
   state: CardState;
@@ -81,6 +103,20 @@ type CollectionRow = {
   rarity_tier: RarityTier;
   image_url: string | null;
   image_url_hires: string | null;
+};
+
+type CollectionDetailRow = CollectionRow & {
+  pack_tier: PackTier | null;
+  drop_id: string | null;
+  drop_name: string | null;
+  active_auction_id: string | null;
+};
+
+type CollectionTransactionRow = {
+  id: string;
+  type: CollectionCardTransactionType;
+  amount: string;
+  created_at: string;
 };
 
 type PortfolioCardRow = {
@@ -103,6 +139,15 @@ function toMoneyCents(value: string | number): number {
   }
 
   return Math.max(Math.trunc(parsed), 0);
+}
+
+function toSignedMoneyCents(value: string | number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+
+  return Math.trunc(parsed);
 }
 
 function buildPriceFallbackMap(rows: PokemonCardPriceRow[]): Map<string, PokemonCardPriceCacheValue> {
@@ -196,6 +241,7 @@ function mapCollectionRow(row: CollectionRow, currentPrice: number): CollectionC
 
   return {
     id: row.card_id,
+    packId: row.pack_id,
     ownerId: row.owner_id,
     slotNumber: row.slot_number,
     state: row.state,
@@ -220,6 +266,15 @@ function mapCollectionRow(row: CollectionRow, currentPrice: number): CollectionC
       imageUrl: row.image_url,
       imageUrlHires: row.image_url_hires
     }
+  };
+}
+
+function mapCollectionTransactionRow(row: CollectionTransactionRow): CollectionCardTransaction {
+  return {
+    id: row.id,
+    type: row.type,
+    amount: toSignedMoneyCents(row.amount),
+    createdAtIso: row.created_at
   };
 }
 
@@ -252,6 +307,7 @@ export async function listCollectionCards(input: {
 
   const result = await query<CollectionRow>(
     `SELECT c.id AS card_id,
+            c.pack_id,
             c.owner_id,
             c.slot_number,
             c.state,
@@ -294,6 +350,104 @@ export async function listCollectionCards(input: {
     page,
     limit,
     total: Number(totalResult.rows[0]?.total ?? 0)
+  };
+}
+
+export async function getCollectionCardDetail(input: {
+  userId: string;
+  cardId: string;
+}): Promise<CollectionCardDetailView | null> {
+  const cardResult = await query<CollectionDetailRow>(
+    `SELECT c.id AS card_id,
+            c.pack_id,
+            c.owner_id,
+            c.slot_number,
+            c.state,
+            c.acquisition_price,
+            c.created_at,
+            l.id AS listing_id,
+            l.price AS listing_price,
+            pc.id AS pokemon_card_id,
+            pc.tcg_id,
+            pc.name,
+            pc.set_name,
+            pc.rarity,
+            pc.rarity_tier,
+            pc.image_url,
+            pc.image_url_hires,
+            p.tier AS pack_tier,
+            d.id AS drop_id,
+            d.name AS drop_name,
+            a.id AS active_auction_id
+     FROM cards c
+     JOIN pokemon_cards pc ON pc.id = c.pokemon_card_id
+     LEFT JOIN listings l
+            ON l.card_id = c.id
+           AND l.status = 'active'
+     LEFT JOIN packs p ON p.id = c.pack_id
+     LEFT JOIN drop_packs dp ON dp.id = p.drop_pack_id
+     LEFT JOIN drops d ON d.id = dp.drop_id
+     LEFT JOIN auctions a
+            ON a.card_id = c.id
+           AND a.status = 'active'
+     WHERE c.id = $1
+       AND c.owner_id = $2
+       AND c.state <> 'in_pack'
+     LIMIT 1`,
+    [input.cardId, input.userId]
+  );
+
+  if (cardResult.rowCount !== 1) {
+    return null;
+  }
+
+  const cardRow = cardResult.rows[0];
+  const resolvedPrices = await resolveReadThroughPrices([cardRow.pokemon_card_id]);
+  const resolvedPrice = resolvedPrices.get(cardRow.pokemon_card_id);
+  const currentPrice = resolvedPrice ? resolvedPrice.currentPrice : 0;
+  const previousPrice = resolvedPrice ? resolvedPrice.previousPrice : 0;
+  const baseCard = mapCollectionRow(cardRow, currentPrice);
+  const acquisitionPrice = baseCard.acquisitionPrice;
+
+  const transactionsResult = await query<CollectionTransactionRow>(
+    `WITH listing_refs AS (
+       SELECT id
+       FROM listings
+       WHERE card_id = $3
+     ),
+     auction_refs AS (
+       SELECT id
+       FROM auctions
+       WHERE card_id = $3
+     )
+     SELECT id, type, amount, created_at
+     FROM transactions
+     WHERE user_id = $1
+       AND (
+         ($2::uuid IS NOT NULL AND type = 'pack_purchase' AND reference_id = $2::uuid)
+         OR (type IN ('trade_buy', 'trade_sell', 'trade_fee')
+             AND reference_id IN (SELECT id FROM listing_refs))
+         OR (type IN ('auction_win', 'auction_sell', 'auction_fee')
+             AND reference_id IN (SELECT id FROM auction_refs))
+       )
+     ORDER BY created_at DESC
+     LIMIT 20`,
+    [input.userId, cardRow.pack_id, input.cardId]
+  );
+
+  return {
+    ...baseCard,
+    pnlPercent: acquisitionPrice > 0 ? currentPrice / acquisitionPrice - 1 : 0,
+    previousPrice,
+    acquiredAtIso: cardRow.created_at,
+    activeAuctionId: cardRow.active_auction_id,
+    lineage: {
+      packId: cardRow.pack_id,
+      packTier: cardRow.pack_tier,
+      dropId: cardRow.drop_id,
+      dropName: cardRow.drop_name
+    },
+    transactions: transactionsResult.rows.map(mapCollectionTransactionRow)
   };
 }
 

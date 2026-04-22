@@ -3,11 +3,17 @@ import {
   AUCTION_EVENTS_CHANNEL,
   BALANCE_EVENTS_CHANNEL,
   AUCTION_FEE_BPS,
+  FINAL_WINDOW_GATE_ENABLED,
+  FINAL_WINDOW_MIN_SECONDS,
+  FINAL_WINDOW_PCT,
+  FINAL_WINDOW_THROTTLE_PER_USER_LIMIT,
+  FINAL_WINDOW_THROTTLE_WINDOW_MS,
   FAT_FINGER_ABSOLUTE_FLOOR_CENTS,
   MIN_AUCTION_START_BID_CENTS,
   MIN_BID_INCREMENT_BPS,
   MIN_BID_INCREMENT_CENTS
 } from "../config/constants";
+import { RateLimitError, enforceRateLimit } from "../middleware/rate-limit";
 import { canUseRedisPubSub, publish } from "../redis/client";
 import { getIO } from "../websocket/io";
 import { roomNames } from "../websocket/rooms";
@@ -15,6 +21,7 @@ import {
   emitAuctionListEventWithCoalescing,
   type AuctionListRealtimeEventName
 } from "../websocket/auctions-list-coalescer";
+import { writeSecurityEventFireAndForget } from "./security-event.service";
 import { calculateFeeFromBps } from "../../lib/decimal";
 import type { AuctionDurationType, AuctionStatus, RarityTier } from "../../lib/types";
 
@@ -149,6 +156,8 @@ type AuctionLockRow = {
   starting_bid: string;
   current_bid: string | null;
   current_bidder_id: string | null;
+  created_at: string;
+  original_end_time: string;
   ends_at: string;
   status: AuctionStatus;
 };
@@ -204,6 +213,48 @@ function calculateMinNextBid(startingBid: number, currentBid: number | null): nu
   }
 
   return currentBid + calculateBidIncrement(currentBid);
+}
+
+type FinalWindowState = {
+  inFinalWindow: boolean;
+  windowStartedAt: string;
+  effectiveEndsAt: string;
+};
+
+export function resolveFinalWindowState(
+  auction: Pick<AuctionLockRow, "created_at" | "original_end_time" | "ends_at">,
+  nowMs: number
+): FinalWindowState {
+  const createdAtMs = Date.parse(auction.created_at);
+  const originalEndTimeMs = Date.parse(auction.original_end_time);
+  const effectiveEndsAtMs = Date.parse(auction.ends_at);
+  const effectiveEndsAt = Number.isFinite(effectiveEndsAtMs)
+    ? new Date(effectiveEndsAtMs).toISOString()
+    : auction.ends_at;
+
+  if (!Number.isFinite(effectiveEndsAtMs)) {
+    return {
+      inFinalWindow: false,
+      windowStartedAt: auction.ends_at,
+      effectiveEndsAt
+    };
+  }
+
+  const auctionDurationMs =
+    Number.isFinite(createdAtMs) && Number.isFinite(originalEndTimeMs)
+      ? Math.max(0, originalEndTimeMs - createdAtMs)
+      : 0;
+  const finalWindowSpanMs = Math.max(
+    FINAL_WINDOW_MIN_SECONDS * 1_000,
+    Math.trunc((auctionDurationMs * FINAL_WINDOW_PCT) / 100)
+  );
+  const windowStartedAtMs = effectiveEndsAtMs - finalWindowSpanMs;
+
+  return {
+    inFinalWindow: nowMs >= windowStartedAtMs && nowMs < effectiveEndsAtMs,
+    windowStartedAt: new Date(windowStartedAtMs).toISOString(),
+    effectiveEndsAt
+  };
 }
 
 function mapAuctionJoinedRow(row: AuctionJoinedRow): AuctionView {
@@ -713,6 +764,7 @@ export async function placeBid(input: {
   auctionId: string;
   amount: number;
   confirmHighBid?: boolean;
+  confirmFinalWindowBid?: boolean;
 }): Promise<PlaceBidResult> {
   const bidAmount = Math.trunc(input.amount);
 
@@ -722,7 +774,7 @@ export async function placeBid(input: {
 
   const result = await withTransaction(async (client) => {
     const auctionResult = await client.query<AuctionLockRow>(
-      `SELECT id, card_id, seller_id, starting_bid, current_bid, current_bidder_id, ends_at, status
+      `SELECT id, card_id, seller_id, starting_bid, current_bid, current_bidder_id, created_at, original_end_time, ends_at, status
        FROM auctions
        WHERE id = $1
          AND status = 'active'
@@ -764,6 +816,42 @@ export async function placeBid(input: {
       throw new AuctionServiceError("Bid is below the minimum required amount.", 409, "BID_TOO_LOW", {
         minimumBid: minNextBid
       });
+    }
+
+    let finalWindowState: FinalWindowState | null = null;
+    if (FINAL_WINDOW_GATE_ENABLED) {
+      finalWindowState = resolveFinalWindowState(auction, Date.now());
+      if (finalWindowState.inFinalWindow) {
+        try {
+          await enforceRateLimit({
+            key: `bid:auction:${input.auctionId}:user:${input.bidderId}:finalWindow`,
+            limit: FINAL_WINDOW_THROTTLE_PER_USER_LIMIT,
+            windowSeconds: Math.max(1, Math.ceil(FINAL_WINDOW_THROTTLE_WINDOW_MS / 1_000))
+          });
+        } catch (error) {
+          if (error instanceof RateLimitError) {
+            throw new AuctionServiceError(
+              "Too many final-window bids. Please try again shortly.",
+              429,
+              "FINAL_WINDOW_RATE_LIMITED",
+              error.details
+            );
+          }
+          throw error;
+        }
+
+        if (input.confirmFinalWindowBid !== true) {
+          throw new AuctionServiceError(
+            "Final-window bid confirmation required.",
+            409,
+            "FINAL_WINDOW_CONFIRMATION_REQUIRED",
+            {
+              windowStartedAt: finalWindowState.windowStartedAt,
+              effectiveEndsAt: finalWindowState.effectiveEndsAt
+            }
+          );
+        }
+      }
     }
 
     // Phase 5 B3 fat-finger cap. Read market value inside the same tx to keep the
@@ -883,7 +971,14 @@ export async function placeBid(input: {
       bid: mapBidJoinedRow(bidResult.rows[0]),
       previousHighestBidderId,
       previousEndsAt,
-      currentEndsAt: updatedAuctionResult.rows[0].ends_at
+      currentEndsAt: updatedAuctionResult.rows[0].ends_at,
+      finalWindowEvidence:
+        finalWindowState && finalWindowState.inFinalWindow
+          ? {
+              windowStartedAt: finalWindowState.windowStartedAt,
+              effectiveEndsAt: finalWindowState.effectiveEndsAt
+            }
+          : null
     };
   });
 
@@ -912,6 +1007,21 @@ export async function placeBid(input: {
     timeExtended,
     balanceUserIds: Array.from(balanceUserIds)
   });
+
+  if (result.finalWindowEvidence) {
+    writeSecurityEventFireAndForget({
+      eventType: "final_window_bid",
+      userId: input.bidderId,
+      requestKey: `auction:${input.auctionId}:bid:${result.bid.id}`,
+      evidence: {
+        auctionId: input.auctionId,
+        bidderId: input.bidderId,
+        amount: bidAmount,
+        endsAt: result.currentEndsAt,
+        windowStartedAt: result.finalWindowEvidence.windowStartedAt
+      }
+    });
+  }
 
   return {
     auction,

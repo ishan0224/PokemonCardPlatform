@@ -1,128 +1,140 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { formatDollarsInputFromCents, formatMoneyCents, parseDollarsInputToCents } from "@/lib/format";
-import type { CollectionCard as CollectionCardView } from "@/lib/api-client";
+import Link from "next/link";
+import { memo, useMemo } from "react";
+import { CardActions } from "@/components/collection/card-actions";
+import { CardImage } from "@/components/ui/card-image";
+import { Chip } from "@/components/ui/chip";
+import { RarityBadge } from "@/components/ui/rarity-badge";
+import { formatMoneyCents } from "@/lib/format";
+import { routes } from "@/lib/routes";
+import { areCollectionCardPropsEqual, type CollectionCardProps } from "./collection-card-memo";
 
-type CollectionCardProps = {
-  card: CollectionCardView;
-  listingPending: boolean;
-  cancelPending: boolean;
-  onCreateListing: (cardId: string, price: number) => Promise<void>;
-  onCancelListing: (listingId: string) => Promise<void>;
-};
-
-export function CollectionCard({
+function CollectionCardComponent({
   card,
   listingPending,
   cancelPending,
+  auctionPending,
   onCreateListing,
-  onCancelListing
+  onCancelListing,
+  onStartAuction
 }: CollectionCardProps): JSX.Element {
-  const [priceInput, setPriceInput] = useState(() => formatDollarsInputFromCents(Math.max(card.currentPrice, 50)));
-  const [localError, setLocalError] = useState<string | null>(null);
-
   const pnlLabel = useMemo(() => {
     const abs = formatMoneyCents(Math.abs(card.pnl));
     return card.pnl >= 0 ? `+${abs}` : `-${abs}`;
   }, [card.pnl]);
 
-  const onSubmitListing = async (): Promise<void> => {
-    const parsed = parseDollarsInputToCents(priceInput);
-    if (parsed === null || parsed < 50) {
-      setLocalError("Listing price must be at least $0.50.");
-      return;
-    }
-
-    setLocalError(null);
-    await onCreateListing(card.id, parsed);
-  };
+  const cardImage = (
+    <div className="mb-3 flex justify-center">
+      <CardImage
+        src={card.pokemonCard.imageUrl}
+        hiresSrc={card.pokemonCard.imageUrlHires}
+        alt={card.pokemonCard.name}
+        size="md"
+        rarityTier={card.pokemonCard.rarityTier}
+      />
+    </div>
+  );
 
   return (
-    <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <article className="flex flex-col rounded-pv-lg border border-pv-line bg-pv-surface-2 p-[14px]">
+      {cardImage}
+
       <div className="flex items-start justify-between gap-2">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{card.pokemonCard.rarityTier}</p>
-          <h3 className="mt-1 text-base font-black text-slate-900">{card.pokemonCard.name}</h3>
-          <p className="text-sm text-slate-600">{card.pokemonCard.setName}</p>
-        </div>
-        <span
-          className={`rounded-full px-2 py-1 text-xs font-bold uppercase ${
-            card.state === "listed" ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"
-          }`}
-        >
-          {card.state}
-        </span>
+        <h3 className="truncate text-[14px] font-bold text-pv-text">{card.pokemonCard.name}</h3>
+        <RarityBadge rarity={card.pokemonCard.rarityTier} compact />
+      </div>
+      <p className="text-[12px] text-pv-muted">{card.pokemonCard.setName}</p>
+
+      {/* META ROWS */}
+      <div className="mt-3 space-y-1 text-[13px]">
+        {card.state === "listed" && card.activeListing ? (
+          <>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                Listed at
+              </span>
+              <span className="font-extrabold tabular-nums text-pv-text">
+                {formatMoneyCents(card.activeListing.price)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                Market
+              </span>
+              <span className="text-pv-muted">{formatMoneyCents(card.currentPrice)}</span>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                Market
+              </span>
+              <span
+                className={`font-extrabold tabular-nums ${
+                  card.pokemonCard.rarityTier === "chase" || card.pokemonCard.rarityTier === "ultra_rare"
+                    ? "text-pv-gold"
+                    : "text-pv-text"
+                }`}
+              >
+                {formatMoneyCents(card.currentPrice)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                P&amp;L
+              </span>
+              <span className={`font-bold ${card.pnl >= 0 ? "text-pv-good" : "text-pv-accent"}`}>
+                {pnlLabel}
+              </span>
+            </div>
+          </>
+        )}
       </div>
 
-      <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
-        <div className="rounded-lg bg-slate-100 p-2">
-          <p className="text-[11px] uppercase text-slate-500">Acquired</p>
-          <p className="font-bold text-slate-900">{formatMoneyCents(card.acquisitionPrice)}</p>
-        </div>
-        <div className="rounded-lg bg-slate-100 p-2">
-          <p className="text-[11px] uppercase text-slate-500">Market</p>
-          <p className="font-bold text-slate-900">{formatMoneyCents(card.currentPrice)}</p>
-        </div>
-        <div className={`rounded-lg p-2 ${card.pnl >= 0 ? "bg-emerald-100" : "bg-rose-100"}`}>
-          <p className={`text-[11px] uppercase ${card.pnl >= 0 ? "text-emerald-700" : "text-rose-700"}`}>P&L</p>
-          <p className={`font-bold ${card.pnl >= 0 ? "text-emerald-900" : "text-rose-900"}`}>{pnlLabel}</p>
-        </div>
-      </div>
-
-      {card.state === "owned" ? (
-        <div className="mt-4 space-y-2">
-          <label htmlFor={`list-price-${card.id}`} className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            List Price (USD)
-          </label>
-          <div className="flex items-center gap-2">
-            <input
-              id={`list-price-${card.id}`}
-              type="number"
-              min={0.5}
-              step={0.01}
-              value={priceInput}
-              onChange={(event) => {
-                setPriceInput(event.target.value);
-                if (localError) {
-                  setLocalError(null);
-                }
-              }}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-medium text-slate-900 outline-none ring-0 transition focus:border-slate-500"
-            />
-            <button
-              type="button"
-              disabled={listingPending}
-              onClick={() => void onSubmitListing()}
-              className={`rounded-xl px-3 py-2 text-sm font-bold transition ${
-                listingPending ? "cursor-not-allowed bg-slate-200 text-slate-500" : "bg-slate-900 text-white hover:bg-slate-700"
-              }`}
-            >
-              {listingPending ? "Listing..." : "List"}
-            </button>
-          </div>
-          {localError ? <p className="text-xs font-semibold text-rose-700">{localError}</p> : null}
+      {/* STATE CHIP (for non-owned) */}
+      {card.state !== "owned" ? (
+        <div className="mt-3">
+          <Chip tone={card.state === "listed" ? "upcoming" : "info"}>
+            {card.state === "listed" ? "Listed" : "In auction"}
+          </Chip>
         </div>
       ) : null}
 
-      {card.state === "listed" && card.activeListing ? (
-        <div className="mt-4 flex items-center justify-between rounded-xl bg-amber-50 p-3">
-          <div>
-            <p className="text-xs uppercase text-amber-700">Active Listing</p>
-            <p className="text-sm font-bold text-amber-900">{formatMoneyCents(card.activeListing.price)}</p>
-          </div>
-          <button
-            type="button"
-            disabled={cancelPending}
-            onClick={() => void onCancelListing(card.activeListing!.id)}
-            className={`rounded-xl px-3 py-2 text-sm font-bold transition ${
-              cancelPending ? "cursor-not-allowed bg-slate-200 text-slate-500" : "bg-amber-600 text-white hover:bg-amber-700"
-            }`}
+      {/* PACK VERIFY */}
+      {card.packId ? (
+        <div className="mt-3 flex items-center justify-between rounded-pv-sm border border-pv-info/20 bg-[rgba(56,189,248,0.06)] px-2.5 py-1.5">
+          <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-pv-info">
+            Provably fair
+          </span>
+          <Link
+            href={routes.fairness.verify(card.packId)}
+            className="text-[11px] font-bold text-pv-info hover:underline"
           >
-            {cancelPending ? "Cancelling..." : "Cancel"}
-          </button>
+            Verify →
+          </Link>
         </div>
       ) : null}
+
+      {/* ACTIONS */}
+      <div className="mt-3 flex-1" />
+      <div className="mt-3 space-y-2">
+        <CardActions
+          card={card}
+          listingPending={listingPending}
+          cancelPending={cancelPending}
+          auctionPending={auctionPending}
+          onCreateListing={onCreateListing}
+          onCancelListing={onCancelListing}
+          onStartAuction={onStartAuction}
+          showViewDetailsLink
+          viewDetailsHref={routes.collection.detail(card.id)}
+        />
+      </div>
     </article>
   );
 }
+
+export const CollectionCard = memo(CollectionCardComponent, areCollectionCardPropsEqual);
+CollectionCard.displayName = "CollectionCard";

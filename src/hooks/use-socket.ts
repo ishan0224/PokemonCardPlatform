@@ -7,11 +7,13 @@ import {
   subscribeToAuctionRoom,
   subscribeToDropRoom,
   subscribeToMarketplaceRoom,
+  subscribeToAdminMetricsRoom,
   type PortfolioRoomHandlers,
   type AuctionsRoomHandlers,
   type AuctionRoomHandlers,
   type DropRoomHandlers,
-  type MarketplaceRoomHandlers
+  type MarketplaceRoomHandlers,
+  type AdminMetricsRoomHandlers
 } from "@/lib/socket-client";
 
 export function useDropRoom(dropId: string | null, handlers: DropRoomHandlers): void {
@@ -118,4 +120,23 @@ export function usePortfolioRoom(userId: string | null, handlers: PortfolioRoomH
       onConnected: () => handlersRef.current.onConnected?.()
     });
   }, [userId]);
+}
+
+export function useAdminMetricsRoom(enabled: boolean, handlers: AdminMetricsRoomHandlers): void {
+  const handlersRef = useRef<AdminMetricsRoomHandlers>(handlers);
+
+  useEffect(() => {
+    handlersRef.current = handlers;
+  }, [handlers]);
+
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
+    return subscribeToAdminMetricsRoom({
+      onMetricsDelta: (event) => handlersRef.current.onMetricsDelta?.(event),
+      onConnected: () => handlersRef.current.onConnected?.()
+    });
+  }, [enabled]);
 }

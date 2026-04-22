@@ -5,6 +5,7 @@ import {
   type AuthenticatedUser,
   validateSupabaseAccessToken
 } from "../supabase/client";
+import { getAppUserById } from "../services/user.service";
 
 export class AuthError extends Error {
   public readonly statusCode: number;
@@ -85,9 +86,11 @@ export async function authenticateSocket(
     }
 
     const user = await validateSupabaseAccessToken(accessToken);
+    const appUser = await getAppUserById(user.userId);
     socket.data.userId = user.userId;
     socket.data.email = user.email;
     socket.data.username = user.username;
+    socket.data.role = appUser?.role ?? "user";
 
     return next();
   } catch (_error) {
@@ -117,9 +120,11 @@ export async function authenticateSocketIfPresent(socket: Socket): Promise<void>
 
   try {
     const user = await validateSupabaseAccessToken(accessToken);
+    const appUser = await getAppUserById(user.userId);
     socket.data.userId = user.userId;
     socket.data.email = user.email;
     socket.data.username = user.username;
+    socket.data.role = appUser?.role ?? "user";
   } catch (_error) {
     // Invalid tokens are ignored for public-room access.
   }

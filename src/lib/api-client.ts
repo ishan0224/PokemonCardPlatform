@@ -1,16 +1,21 @@
 import type {
+  AuctionFlagResolution,
+  AuctionFlagReviewItem,
   AuctionDurationType,
   AuctionStatus,
   CardState,
+  CollectionCardTransaction,
   DropStatus,
   EconomicsGenerationVersionPage,
   EconomicsRebalanceResult,
   EconomicsSimulation,
   EconomicsSummary,
+  FairnessAuditResult,
   ListingStatus,
   PackEconomicsBundle,
   PackTier,
-  RarityTier
+  RarityTier,
+  SlotDistribution
 } from "./types";
 
 export type ApiUser = {
@@ -45,12 +50,25 @@ export type Drop = {
 export type PackSummary = {
   id: string;
   dropId: string;
+  dropName: string;
+  dropScheduledAt: string;
   dropPackId: string;
   tier: PackTier;
   pricePaid: number;
   opened: boolean;
   purchasedAt: string;
   openedAt: string | null;
+};
+
+export type ListMyPacksInput = {
+  opened?: boolean;
+  cursor?: string | null;
+  limit?: number;
+};
+
+export type ListMyPacksResponse = {
+  packs: PackSummary[];
+  nextCursor: string | null;
 };
 
 export type PackCard = {
@@ -81,6 +99,7 @@ export type MarketplaceSort = "newest" | "price_asc" | "price_desc";
 
 export type CollectionCard = {
   id: string;
+  packId: string | null;
   ownerId: string;
   slotNumber: number;
   state: CardState;
@@ -102,6 +121,141 @@ export type CollectionCard = {
     imageUrl: string | null;
     imageUrlHires: string | null;
   };
+};
+
+export type CollectionCardDetail = CollectionCard & {
+  pnlPercent: number;
+  previousPrice: number;
+  acquiredAtIso: string;
+  activeAuctionId: string | null;
+  lineage: {
+    packId: string | null;
+    packTier: PackTier | null;
+    dropId: string | null;
+    dropName: string | null;
+  };
+  transactions: CollectionCardTransaction[];
+};
+
+export type FairnessMyPack = {
+  id: string;
+  tier: PackTier;
+  dropId: string;
+  dropScheduledAt: string;
+  purchasedAt: string;
+  verificationStatus: "VERIFIABLE" | "SEED_UNREVEALED" | "SEED_DECRYPTION_FAILED" | "UNVERIFIABLE_LEGACY_PACK";
+};
+
+export type AdminDropStatus = DropStatus | "draft";
+
+export type AdminDropTierComposition = {
+  setKeys: string[];
+  includedRarities: RarityTier[];
+  explicitIncludeCardIds: string[];
+  explicitExcludeCardIds: string[];
+};
+
+export type AdminDropTierInput = {
+  tier: PackTier;
+  price: number;
+  totalInventory: number;
+  composition: AdminDropTierComposition;
+};
+
+export type AdminDropMutationInput = {
+  name: string;
+  scheduledAt: string;
+  lotteryEnabled: boolean;
+  maxPacksPerUser: number;
+  tiers: AdminDropTierInput[];
+};
+
+export type AdminDropTierPreview = {
+  tier: PackTier;
+  cardsPerPack: number;
+  slots: SlotDistribution[][];
+  eligibleCounts: Record<RarityTier, number>;
+  requiredPerRarity: number;
+  readiness: {
+    ready: boolean;
+    issues: Array<{
+      rarity: RarityTier;
+      required: number;
+      actual: number;
+    }>;
+  };
+};
+
+export type AdminDropPreview = {
+  tiers: AdminDropTierPreview[];
+  overallReady: boolean;
+};
+
+export type AdminDropTierView = {
+  tier: PackTier;
+  price: number;
+  totalInventory: number;
+  remainingInventory: number;
+  consumedInventory: number;
+  cardsPerPack: number;
+  slots: SlotDistribution[][];
+  composition: AdminDropTierComposition;
+  eligibleCounts: Record<RarityTier, number>;
+};
+
+export type AdminDropView = {
+  id: string;
+  name: string;
+  status: AdminDropStatus;
+  scheduledAt: string;
+  lotteryEnabled: boolean;
+  maxPacksPerUser: number;
+  publishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  tiers: AdminDropTierView[];
+  inventory: {
+    total: number;
+    remaining: number;
+    consumed: number;
+  };
+  lottery: {
+    wins: number;
+    losses: number;
+    unavailable: number;
+  };
+  scheduler: {
+    issueCount: number;
+    lastIssueAt: string | null;
+  };
+};
+
+export type AdminCardSetItem = {
+  setKey: string;
+  setName: string;
+  setId: string | null;
+  totalCount: number;
+  rarityCounts: {
+    common: number;
+    uncommon: number;
+    rare: number;
+    holoRare: number;
+    ultraRare: number;
+    chase: number;
+  };
+};
+
+export type AdminCardSearchItem = {
+  id: string;
+  tcgId: string;
+  name: string;
+  setName: string;
+  setId: string | null;
+  setKey: string;
+  rarityTier: RarityTier;
+  currentPrice: number;
+  imageUrl: string | null;
+  imageUrlHires: string | null;
 };
 
 export type CollectionPortfolio = {
@@ -241,6 +395,25 @@ function createAbortError(message: string): ApiClientError {
   return new ApiClientError({ code: "REQUEST_ABORTED", message }, 499);
 }
 
+export const AUTH_SESSION_REFRESHED_EVENT = "pv:auth-session-refreshed";
+
+type UnauthorizedHandler = () => void;
+
+const AUTH_REFRESH_PATH = "/api/auth/refresh";
+const AUTH_REFRESH_EXCLUDED_PATHS: readonly string[] = [
+  "/api/auth/login",
+  "/api/auth/register",
+  "/api/auth/logout",
+  AUTH_REFRESH_PATH
+];
+
+let onUnauthorized: UnauthorizedHandler | null = null;
+let inFlightRefreshPromise: Promise<boolean> | null = null;
+
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
+  onUnauthorized = handler;
+}
+
 async function parseJsonSafe(response: Response): Promise<JsonRecord> {
   const text = await response.text();
 
@@ -261,7 +434,48 @@ async function parseJsonSafe(response: Response): Promise<JsonRecord> {
   }
 }
 
-async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> {
+type RequestOptions = {
+  allowAuthRefresh: boolean;
+  alreadyRetried: boolean;
+  emitUnauthorized: boolean;
+};
+
+function isAuthRefreshExcludedPath(path: string): boolean {
+  return AUTH_REFRESH_EXCLUDED_PATHS.some((prefix) => path.startsWith(prefix));
+}
+
+async function attemptAuthSessionRefresh(): Promise<boolean> {
+  if (inFlightRefreshPromise) {
+    return inFlightRefreshPromise;
+  }
+
+  inFlightRefreshPromise = (async () => {
+    try {
+      await requestJsonInternal<{ refreshed: boolean }>(
+        AUTH_REFRESH_PATH,
+        { method: "POST" },
+        {
+          allowAuthRefresh: false,
+          alreadyRetried: true,
+          emitUnauthorized: false
+        }
+      );
+
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event(AUTH_SESSION_REFRESHED_EVENT));
+      }
+      return true;
+    } catch (_error) {
+      return false;
+    } finally {
+      inFlightRefreshPromise = null;
+    }
+  })();
+
+  return inFlightRefreshPromise;
+}
+
+async function requestJsonInternal<T>(path: string, init: RequestInit, options: RequestOptions): Promise<T> {
   try {
     const response = await fetch(path, {
       ...init,
@@ -276,15 +490,40 @@ async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> 
     const payload = await parseJsonSafe(response);
 
     if (!response.ok) {
-      const error = payload.error as ApiErrorPayload | undefined;
-      throw new ApiClientError(
+      const errorPayload = payload.error as ApiErrorPayload | undefined;
+      const apiError = new ApiClientError(
         {
-          code: error?.code ?? "HTTP_ERROR",
-          message: error?.message ?? `Request failed with ${response.status}.`,
-          details: error?.details
+          code: errorPayload?.code ?? "HTTP_ERROR",
+          message: errorPayload?.message ?? `Request failed with ${response.status}.`,
+          details: errorPayload?.details
         },
         response.status
       );
+
+      const shouldTryRefresh =
+        options.allowAuthRefresh &&
+        !options.alreadyRetried &&
+        response.status === 401 &&
+        apiError.code === "UNAUTHORIZED" &&
+        !isAuthRefreshExcludedPath(path);
+
+      if (shouldTryRefresh) {
+        const refreshed = await attemptAuthSessionRefresh();
+
+        if (refreshed) {
+          return requestJsonInternal<T>(path, init, {
+            allowAuthRefresh: false,
+            alreadyRetried: true,
+            emitUnauthorized: options.emitUnauthorized
+          });
+        }
+      }
+
+      if (options.emitUnauthorized && response.status === 401 && apiError.code === "UNAUTHORIZED") {
+        onUnauthorized?.();
+      }
+
+      throw apiError;
     }
 
     return payload as T;
@@ -294,6 +533,14 @@ async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> 
     }
     throw error;
   }
+}
+
+async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> {
+  return requestJsonInternal<T>(path, init, {
+    allowAuthRefresh: true,
+    alreadyRetried: false,
+    emitUnauthorized: true
+  });
 }
 
 export function mapApiErrorToMessage(error: unknown): string {
@@ -313,6 +560,7 @@ export function mapApiErrorToMessage(error: unknown): string {
         return "Open the pack before revealing cards.";
       case "PACK_NOT_FOUND":
       case "DROP_NOT_FOUND":
+      case "CARD_NOT_FOUND":
         return "The requested item was not found.";
       case "UNAUTHORIZED":
         return "Please log in to continue.";
@@ -350,10 +598,28 @@ export function mapApiErrorToMessage(error: unknown): string {
         return "Bid is below the minimum required amount.";
       case "INVALID_BID_AMOUNT":
         return "Bid amount is invalid.";
+      case "FINAL_WINDOW_CONFIRMATION_REQUIRED":
+        return "Final-window bid confirmation is required.";
+      case "FINAL_WINDOW_RATE_LIMITED":
+        return "Too many final-window bids. Please wait and try again.";
       case "FORBIDDEN":
         return "You do not have permission to access this page.";
       case "INVALID_WINDOW":
         return "Time window is invalid.";
+      case "DROP_NOT_EDITABLE":
+        return "This drop can no longer be edited.";
+      case "DROP_NOT_PUBLISHABLE":
+        return "Only draft drops can be published.";
+      case "INVALID_DROP_CONFIGURATION":
+        return "Drop configuration is invalid.";
+      case "COMPOSITION_POOL_TOO_SMALL":
+        return "Pack composition is too small for activation.";
+      case "INVALID_CARD_QUERY":
+        return "Search query is invalid.";
+      case "INVALID_CURSOR":
+        return "Pagination cursor is invalid.";
+      case "INVALID_OPENED":
+        return "Opened filter is invalid.";
       case "REQUEST_ABORTED":
         return "";
       default:
@@ -400,6 +666,14 @@ export const apiClient = {
     return requestJson(`/api/drops?limit=${limit}`, { method: "GET", signal });
   },
 
+  listActiveDrops(limit = 20, signal?: AbortSignal): Promise<{ drops: Drop[] }> {
+    return requestJson(`/api/drops/active?limit=${limit}`, { method: "GET", signal });
+  },
+
+  listUpcomingDrops(limit = 20, signal?: AbortSignal): Promise<{ drops: Drop[] }> {
+    return requestJson(`/api/drops/upcoming?limit=${limit}`, { method: "GET", signal });
+  },
+
   getDrop(dropId: string, signal?: AbortSignal): Promise<{ drop: Drop }> {
     return requestJson(`/api/drops/${dropId}`, { method: "GET", signal });
   },
@@ -414,6 +688,25 @@ export const apiClient = {
 
   listPacks(limit = 50, signal?: AbortSignal): Promise<{ packs: PackSummary[] }> {
     return requestJson(`/api/packs?limit=${limit}`, { method: "GET", signal });
+  },
+
+  listMyPacks(input: ListMyPacksInput = {}, signal?: AbortSignal): Promise<ListMyPacksResponse> {
+    const params = new URLSearchParams();
+    if (typeof input.opened === "boolean") {
+      params.set("opened", String(input.opened));
+    }
+    if (typeof input.limit === "number") {
+      params.set("limit", String(input.limit));
+    }
+    if (input.cursor) {
+      params.set("cursor", input.cursor);
+    }
+    const query = params.toString();
+
+    return requestJson(`/api/packs${query ? `?${query}` : ""}`, {
+      method: "GET",
+      signal
+    });
   },
 
   getPack(packId: string, signal?: AbortSignal): Promise<{ pack: PackDetail }> {
@@ -461,6 +754,10 @@ export const apiClient = {
 
     const query = params.toString();
     return requestJson(`/api/collection${query ? `?${query}` : ""}`, { method: "GET", signal });
+  },
+
+  getCollectionCard(cardId: string, signal?: AbortSignal): Promise<{ card: CollectionCardDetail }> {
+    return requestJson(`/api/collection/${encodeURIComponent(cardId)}`, { method: "GET", signal });
   },
 
   getCollectionPortfolio(signal?: AbortSignal): Promise<{ portfolio: CollectionPortfolio }> {
@@ -568,18 +865,18 @@ export const apiClient = {
   placeBid(
     auctionId: string,
     amount: number,
-    options?: { confirmHighBid?: boolean; signal?: AbortSignal }
+    options?: { confirmHighBid?: boolean; confirmFinalWindowBid?: boolean; signal?: AbortSignal }
   ): Promise<{
     auction: AuctionDetail;
     bid: AuctionBid;
     timeExtended: boolean;
   }> {
-    // Phase 5 B3: confirmHighBid is opt-in for bypassing the suspicious
-    // ceiling. Only serialize the field when explicitly true — the server
-    // already treats missing/false identically, keeping the wire minimal.
-    const body: { amount: number; confirmHighBid?: true } = { amount };
+    const body: { amount: number; confirmHighBid?: true; confirmFinalWindowBid?: true } = { amount };
     if (options?.confirmHighBid === true) {
       body.confirmHighBid = true;
+    }
+    if (options?.confirmFinalWindowBid === true) {
+      body.confirmFinalWindowBid = true;
     }
     return requestJson(`/api/auctions/${auctionId}/bid`, {
       method: "POST",
@@ -620,6 +917,211 @@ export const apiClient = {
     const query = params.toString();
     return requestJson(`/api/admin/economics/packs${query ? `?${query}` : ""}`, {
       method: "GET",
+      signal
+    });
+  },
+
+  getFairnessAudit(
+    input: { window?: string; source?: "latest" | "nightly" } = {},
+    signal?: AbortSignal
+  ): Promise<{ audit: FairnessAuditResult }> {
+    const params = new URLSearchParams();
+    if (input.window) {
+      params.set("window", input.window);
+    }
+    if (input.source === "nightly") {
+      params.set("source", "nightly");
+    }
+    const query = params.toString();
+    return requestJson(`/api/admin/fairness/audit${query ? `?${query}` : ""}`, {
+      method: "GET",
+      signal
+    });
+  },
+
+  rerunFairnessAudit(signal?: AbortSignal): Promise<{ audit: FairnessAuditResult; warning: string }> {
+    return requestJson("/api/admin/fairness/audit/rerun", {
+      method: "POST",
+      signal
+    });
+  },
+
+  getFairnessTestVector(signal?: AbortSignal): Promise<{ vector: unknown }> {
+    return requestJson("/api/fairness/verify-test-vector", {
+      method: "GET",
+      signal
+    });
+  },
+
+  getFairnessPack(packId: string, signal?: AbortSignal): Promise<{ pack: unknown }> {
+    return requestJson(`/api/fairness/pack/${packId}`, {
+      method: "GET",
+      signal
+    });
+  },
+
+  getMyFairnessPacks(
+    input: {
+      date?: string | null;
+      dropId?: string | null;
+      cursor?: string | null;
+      limit?: number;
+    } = {},
+    signal?: AbortSignal
+  ): Promise<{ packs: FairnessMyPack[]; nextCursor: string | null }> {
+    const params = new URLSearchParams();
+    if (input.date) {
+      params.set("date", input.date);
+    }
+    if (input.dropId) {
+      params.set("dropId", input.dropId);
+    }
+    if (input.cursor) {
+      params.set("cursor", input.cursor);
+    }
+    if (typeof input.limit === "number") {
+      params.set("limit", String(input.limit));
+    }
+    const query = params.toString();
+    return requestJson(`/api/fairness/my-packs${query ? `?${query}` : ""}`, {
+      method: "GET",
+      signal
+    });
+  },
+
+  listAdminDrops(
+    input: {
+      cursor?: string | null;
+      limit?: number;
+      status?: AdminDropStatus | "all";
+    } = {},
+    signal?: AbortSignal
+  ): Promise<{ items: AdminDropView[]; nextCursor: string | null }> {
+    const params = new URLSearchParams();
+    if (input.cursor) {
+      params.set("cursor", input.cursor);
+    }
+    if (typeof input.limit === "number") {
+      params.set("limit", String(input.limit));
+    }
+    if (input.status) {
+      params.set("status", input.status);
+    }
+    const query = params.toString();
+    return requestJson(`/api/admin/drops${query ? `?${query}` : ""}`, {
+      method: "GET",
+      signal
+    });
+  },
+
+  getAdminDrop(dropId: string, signal?: AbortSignal): Promise<{ drop: AdminDropView }> {
+    return requestJson(`/api/admin/drops/${dropId}`, {
+      method: "GET",
+      signal
+    });
+  },
+
+  createAdminDrop(input: AdminDropMutationInput, signal?: AbortSignal): Promise<{ drop: AdminDropView }> {
+    return requestJson("/api/admin/drops", {
+      method: "POST",
+      body: JSON.stringify(input),
+      signal
+    });
+  },
+
+  updateAdminDrop(dropId: string, input: AdminDropMutationInput, signal?: AbortSignal): Promise<{ drop: AdminDropView }> {
+    return requestJson(`/api/admin/drops/${dropId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+      signal
+    });
+  },
+
+  publishAdminDrop(dropId: string, signal?: AbortSignal): Promise<{ drop: AdminDropView }> {
+    return requestJson(`/api/admin/drops/${dropId}/publish`, {
+      method: "POST",
+      signal
+    });
+  },
+
+  previewAdminDrop(input: AdminDropMutationInput, signal?: AbortSignal): Promise<{ preview: AdminDropPreview }> {
+    return requestJson("/api/admin/drops", {
+      method: "PUT",
+      body: JSON.stringify(input),
+      signal
+    });
+  },
+
+  listAdminCardSets(
+    input: {
+      cursor?: string | null;
+      limit?: number;
+    } = {},
+    signal?: AbortSignal
+  ): Promise<{ items: AdminCardSetItem[]; nextCursor: string | null }> {
+    const params = new URLSearchParams();
+    if (input.cursor) {
+      params.set("cursor", input.cursor);
+    }
+    if (typeof input.limit === "number") {
+      params.set("limit", String(input.limit));
+    }
+    const query = params.toString();
+    return requestJson(`/api/admin/cards/sets${query ? `?${query}` : ""}`, {
+      method: "GET",
+      signal
+    });
+  },
+
+  searchAdminCards(
+    input: {
+      query: string;
+      cursor?: string | null;
+      limit?: number;
+    },
+    signal?: AbortSignal
+  ): Promise<{ items: AdminCardSearchItem[]; nextCursor: string | null }> {
+    const params = new URLSearchParams();
+    params.set("q", input.query);
+    if (input.cursor) {
+      params.set("cursor", input.cursor);
+    }
+    if (typeof input.limit === "number") {
+      params.set("limit", String(input.limit));
+    }
+    const query = params.toString();
+    return requestJson(`/api/admin/cards${query ? `?${query}` : ""}`, {
+      method: "GET",
+      signal
+    });
+  },
+
+  listAuctionFlags(
+    input: { status?: "open" | "resolved" | "all"; limit?: number } = {},
+    signal?: AbortSignal
+  ): Promise<{ flags: AuctionFlagReviewItem[] }> {
+    const params = new URLSearchParams();
+    if (input.status) {
+      params.set("status", input.status);
+    }
+    if (typeof input.limit === "number") {
+      params.set("limit", String(input.limit));
+    }
+    const query = params.toString();
+    return requestJson(`/api/admin/auction-flags${query ? `?${query}` : ""}`, {
+      method: "GET",
+      signal
+    });
+  },
+
+  resolveAuctionFlag(
+    flagId: string,
+    resolution: AuctionFlagResolution,
+    signal?: AbortSignal
+  ): Promise<{ flag: AuctionFlagReviewItem }> {
+    return requestJson(`/api/admin/auction-flags/${flagId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ resolution }),
       signal
     });
   },
