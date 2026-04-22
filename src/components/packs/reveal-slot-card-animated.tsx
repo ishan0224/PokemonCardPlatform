@@ -6,7 +6,10 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { CardImage } from "@/components/ui/card-image";
 import { CardShell } from "@/components/ui/card-shell";
+import { Chip } from "@/components/ui/chip";
+import { RarityBadge } from "@/components/ui/rarity-badge";
 import type { PackCard } from "@/lib/api-client";
+import type { RarityTier } from "@/lib/types";
 import { formatMoneyCents } from "@/lib/format";
 
 const ScratchOverlay = dynamic(
@@ -143,8 +146,17 @@ export function RevealSlotCardAnimated({
 
   const header = (
     <div className="flex items-center justify-between">
-      <span className="text-xs font-bold uppercase tracking-wide text-pv-muted">Slot {slotNumber}</span>
-      {card ? <span className="rounded-full bg-pv-ink px-2 py-1 text-xs font-bold uppercase text-white">{card.rarityTier}</span> : null}
+      <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+        Slot {slotNumber}
+        {card && (card.rarityTier === "ultra_rare" || card.rarityTier === "chase")
+          ? " · feature"
+          : ""}
+      </span>
+      {card ? (
+        <RarityBadge rarity={card.rarityTier} />
+      ) : (
+        <Chip tone="neutral">Face-down</Chip>
+      )}
     </div>
   );
 
@@ -182,7 +194,7 @@ export function RevealSlotCardAnimated({
                 rarityTier={card.rarityTier}
               />
             ) : (
-              <div className="h-full w-full rounded-xl border border-pv-border bg-pv-parchment-soft" />
+              <div className="h-full w-full rounded-pv border border-pv-line bg-pv-surface-3" />
             )}
           </div>
         </motion.div>
@@ -235,29 +247,32 @@ export function RevealSlotCardAnimated({
   const body =
     isRevealed && card ? (
       <div>
-        <h3 className="text-lg font-black text-pv-ink">{card.pokemonCard.name}</h3>
-        <p className="text-sm text-pv-muted">{card.pokemonCard.setName}</p>
-        <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-          <div className="rounded-lg bg-pv-parchment-soft p-2">
-            <p className="text-xs uppercase text-pv-muted">Acquired</p>
-            <p className="font-bold text-pv-ink">{formatMoneyCents(card.acquisitionPrice)}</p>
-          </div>
-          <div className="rounded-lg bg-emerald-100 p-2">
-            <p className="text-xs uppercase text-emerald-700">Market</p>
-            <p className="font-bold text-emerald-900">{formatMoneyCents(card.pokemonCard.currentPrice)}</p>
-          </div>
+        <h3 className="text-[14px] font-bold text-pv-text">{card.pokemonCard.name}</h3>
+        <div className="mt-1 flex items-center justify-between text-[12px]">
+          <span className="text-pv-muted">{card.pokemonCard.setName}</span>
+          <span
+            className={`font-extrabold tabular-nums ${
+              card.rarityTier === "chase" || card.rarityTier === "ultra_rare"
+                ? "text-pv-gold"
+                : "text-pv-text"
+            }`}
+          >
+            {formatMoneyCents(card.pokemonCard.currentPrice)}
+          </span>
         </div>
       </div>
     ) : (
-      <div className="space-y-2 rounded-xl border border-dashed border-pv-border bg-pv-parchment-soft p-4 text-center text-sm font-semibold text-pv-muted">
+      <div className="space-y-2 rounded-pv-sm border border-dashed border-pv-line bg-pv-surface-3 p-3 text-center text-[12px] font-semibold text-pv-muted">
         <p>
           {revealMode === "touch" && !reducedMotion
             ? "Scratch the card to reveal"
             : revealMode === "auto" && !reducedMotion
               ? "Tap card to auto-scratch"
-              : "Tap reveal to flip"}
+              : "Tap to scratch"}
         </p>
-        {localError ? <p className="text-sm font-semibold text-rose-700">! {localError}</p> : null}
+        {localError ? (
+          <p className="text-[11px] font-semibold text-pv-accent">! {localError}</p>
+        ) : null}
       </div>
     );
 
@@ -265,6 +280,7 @@ export function RevealSlotCardAnimated({
     !isRevealed && onReveal ? (
       <Button
         type="button"
+        variant="gold"
         fullWidth
         loading={pending || localPending}
         onClick={() => {
@@ -273,9 +289,30 @@ export function RevealSlotCardAnimated({
         }}
         aria-label={`Reveal slot ${slotNumber}`}
       >
-        {pending || localPending ? "Revealing..." : "Reveal Slot"}
+        {pending || localPending ? "Revealing…" : "Scratch to reveal"}
       </Button>
     ) : undefined;
 
-  return <CardShell header={header} media={media} body={body} actions={actions} variant="surface" className="min-h-56" />;
+  const tone = resolveTone(card?.rarityTier);
+
+  return (
+    <CardShell
+      header={header}
+      media={media}
+      body={body}
+      actions={actions}
+      variant="surface"
+      tone={tone}
+      className="min-h-[380px]"
+    />
+  );
+}
+
+function resolveTone(
+  rarity: RarityTier | undefined
+): "default" | "rarity-holo" | "rarity-ultra" | "rarity-chase" {
+  if (rarity === "chase") return "rarity-chase";
+  if (rarity === "ultra_rare") return "rarity-ultra";
+  if (rarity === "holo_rare") return "rarity-holo";
+  return "default";
 }

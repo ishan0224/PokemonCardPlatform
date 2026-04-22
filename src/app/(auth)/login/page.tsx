@@ -73,7 +73,7 @@ export default function LoginPage(): JSX.Element {
     >
       <form className="space-y-3" onSubmit={(event) => void onSubmit(event)}>
         <div>
-          <label htmlFor="login-email" className="text-xs font-bold uppercase tracking-wide text-slate-600">
+          <label htmlFor="login-email" className="text-[10px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
             Email
           </label>
           <input
@@ -84,7 +84,7 @@ export default function LoginPage(): JSX.Element {
             value={email}
             aria-describedby={emailDescribedBy}
             onChange={(event) => setEmail(event.target.value)}
-            className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            className="mt-1 w-full rounded-pv-sm border border-pv-line bg-pv-surface-3 px-3 py-2 text-[13px] font-semibold text-pv-text outline-none transition focus:border-pv-gold focus:ring-2 focus:ring-pv-gold/25"
           />
           <p id={EMAIL_HELP_ID} className="mt-1 text-xs text-pv-muted">
             Use the email tied to your PullVault account.
@@ -92,7 +92,7 @@ export default function LoginPage(): JSX.Element {
         </div>
 
         <div>
-          <label htmlFor="login-password" className="text-xs font-bold uppercase tracking-wide text-slate-600">
+          <label htmlFor="login-password" className="text-[10px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
             Password
           </label>
           <input
@@ -103,12 +103,16 @@ export default function LoginPage(): JSX.Element {
             value={password}
             aria-describedby={passwordDescribedBy}
             onChange={(event) => setPassword(event.target.value)}
-            className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            className="mt-1 w-full rounded-pv-sm border border-pv-line bg-pv-surface-3 px-3 py-2 text-[13px] font-semibold text-pv-text outline-none transition focus:border-pv-gold focus:ring-2 focus:ring-pv-gold/25"
           />
         </div>
 
         {error ? (
-          <p id={errorId} role="alert" className="rounded-xl bg-rose-50 p-2 text-sm font-medium text-rose-700">
+          <p
+            id={errorId}
+            role="alert"
+            className="rounded-pv-sm border border-pv-accent/30 bg-[rgba(239,68,68,0.08)] p-3 text-[13px] font-medium text-[#fca5a5]"
+          >
             {error}
           </p>
         ) : null}

@@ -10,7 +10,11 @@ type DropListItemProps = {
   priority?: boolean;
 };
 
-export function DropListItem({ drop, showCountdown = true, priority = false }: DropListItemProps): JSX.Element {
+export function DropListItem({
+  drop,
+  showCountdown = true,
+  priority = false
+}: DropListItemProps): JSX.Element {
   const countdown = useCountdown(drop.scheduledAt, {
     adaptiveTick: showCountdown
   });
@@ -20,11 +24,5 @@ export function DropListItem({ drop, showCountdown = true, priority = false }: D
       ).padStart(2, "0")}:${String(countdown.seconds).padStart(2, "0")}`
     : undefined;
 
-  return (
-    <section className="rounded-2xl border border-pv-border bg-pv-parchment-soft/20 p-3">
-      <div className="grid grid-cols-1 gap-4">
-        <DropCompositeCard drop={drop} countdownText={countdownText} priority={priority} />
-      </div>
-    </section>
-  );
+  return <DropCompositeCard drop={drop} countdownText={countdownText} priority={priority} />;
 }

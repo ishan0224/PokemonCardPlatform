@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiClientError, apiClient, mapApiErrorToMessage } from "@/lib/api-client";
 import type {
@@ -18,13 +17,11 @@ import { PackTierTable } from "@/components/admin/pack-tier-table";
 import { RevenueMixDonut } from "@/components/admin/revenue-mix-donut";
 import { RevenueTimeChart } from "@/components/admin/revenue-time-chart";
 import { TopAuctionsList } from "@/components/admin/top-auctions-list";
+import { IntegrityList } from "@/components/admin/integrity-list";
 import { StatusPanel } from "@/components/admin/status-panel";
 import { WorstPacksList } from "@/components/admin/worst-packs-list";
 import { WhatIfSimulatorStub } from "@/components/admin/what-if-simulator-stub";
-import { Button } from "@/components/ui/button";
-import { formatPlainPercentBps } from "@/lib/format";
 import { routes } from "@/lib/routes";
-import { RARITY_TIERS } from "@/lib/types";
 
 const PRESET_DURATION_MS: Record<WindowPreset, number> = {
   "1h": 60 * 60 * 1000,
@@ -237,18 +234,22 @@ export default function AdminEconomicsPage(): JSX.Element {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-indigo-600">
-          Platform Economics · live
-        </p>
-        <h1 className="mt-1 text-3xl font-black tracking-tight text-slate-950">Command Center</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          Sourced from <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">platform_revenue</span> and{" "}
-          <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">transactions</span> with live rarity anchors from{" "}
-          <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">pokemon_cards</span>.
-        </p>
-      </div>
+    <div className="space-y-5">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-pv-h1">Economics</h1>
+          <p className="mt-1 text-[13px] text-pv-muted">
+            Last 24h · window closes every hour. Revenue authority lives in Postgres; Redis is read-cache only.
+          </p>
+        </div>
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-pv-surface-3 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.04em] text-pv-muted">
+          <span
+            aria-hidden="true"
+            className="h-1.5 w-1.5 rounded-full bg-pv-good motion-safe:animate-pv-pulse"
+          />
+          Live · admin_metrics_delta
+        </span>
+      </header>
 
       <EconomicsHeader
         preset={preset}
@@ -260,13 +261,16 @@ export default function AdminEconomicsPage(): JSX.Element {
       />
 
       {state.error ? (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+        <div
+          role="alert"
+          className="rounded-pv-sm border border-pv-accent/30 bg-[rgba(239,68,68,0.08)] p-4 text-sm font-medium text-[#fca5a5]"
+        >
           {state.error}
         </div>
       ) : null}
 
       {state.loading && !canRender ? (
-        <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500">
+        <div className="rounded-pv-lg border border-pv-line bg-pv-surface-2 p-10 text-center text-sm text-pv-muted">
           Loading economics…
         </div>
       ) : null}
@@ -281,221 +285,96 @@ export default function AdminEconomicsPage(): JSX.Element {
 
           <EconomicsKpiStrip summary={state.summary} tiers={state.bundle.tiers} />
 
-          <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Rate-limit Denies · 24h</p>
-              <p className="mt-2 text-3xl font-black tracking-tight text-slate-950">
-                {state.bundle.rateLimitHitCount24h.toLocaleString()}
-              </p>
-              <p className="mt-1 text-xs text-slate-500">Live via admin:metrics coalescer</p>
+          {/* DEMO SECTION: hourly bars + revenue mix donut */}
+          <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.6fr_1fr]">
+            <div className="rounded-pv-lg border border-pv-line bg-pv-surface-2 p-6">
+              <RevenueTimeChart series={state.summary.hourlySeries} />
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Open Auction Flags</p>
-              <p className="mt-2 text-3xl font-black tracking-tight text-slate-950">
-                {state.bundle.openAuctionFlagCount.toLocaleString()}
-              </p>
-              <Link
-                href={routes.admin.auctionFlags}
-                className="mt-1 inline-block text-xs font-medium text-indigo-700 underline decoration-indigo-300 underline-offset-2"
-              >
-                Review list
-              </Link>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Margin Incidents · 24h</p>
-              <p className="mt-2 text-3xl font-black tracking-tight text-slate-950">
-                {state.bundle.marginIncidentCount24h.toLocaleString()}
-              </p>
-              <p className="mt-1 text-xs text-slate-500">
-                threshold ±{formatPlainPercentBps(state.bundle.incidentDeltaBps)}
-              </p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Verification Usage · 7d</p>
-              <p className="mt-2 text-3xl font-black tracking-tight text-slate-950">
-                {state.bundle.verificationUsageDistinctUsers7d.toLocaleString()}
-              </p>
-              <p className="mt-1 text-xs text-slate-500">Distinct users running fairness verification</p>
+            <div className="rounded-pv-lg border border-pv-line bg-pv-surface-2 p-6">
+              <RevenueMixDonut summary={state.summary} />
             </div>
           </section>
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-6">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Fairness Audit</p>
-                <h2 className="mt-1 text-xl font-black tracking-tight text-slate-950">
-                  Chi-squared goodness-of-fit
-                </h2>
-              </div>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void handleFairnessRerun()}
-                loading={rerunningFairness}
-              >
-                {rerunningFairness ? "Running…" : "Force rerun"}
-              </Button>
-            </div>
+          {/* PACK TIER TABLE */}
+          <PackTierTable tiers={state.bundle.tiers} portfolio={state.bundle.portfolio} />
 
-            {state.fairnessWarning ? (
-              <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                {state.fairnessWarning}
-              </p>
-            ) : null}
-
-            {state.fairnessOnDemandPreview ? (
-              <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
-                On-demand preview (approximate): p-value {state.fairnessOnDemandPreview.pValue.toFixed(6)} · χ²{" "}
-                {state.fairnessOnDemandPreview.testStatistic.toFixed(4)} · df{" "}
-                {state.fairnessOnDemandPreview.degreesOfFreedom}
-              </div>
-            ) : null}
-
-            {authoritativeFairnessAudit ? (
-              <>
-                <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
-                  Authoritative audit source:{" "}
-                  <span className="font-semibold">
-                    {state.fairnessNightlyAudit ? "nightly" : `${authoritativeFairnessAudit.runSource} (fallback)`}
-                  </span>
-                </div>
-                <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-[11px] text-slate-500">Audit window</p>
-                    <p className="mt-1 font-mono text-xs text-slate-800">
-                      {authoritativeFairnessAudit.windowStartIso}
-                    </p>
-                    <p className="font-mono text-xs text-slate-800">{authoritativeFairnessAudit.windowEndIso}</p>
-                  </div>
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-[11px] text-slate-500">p-value</p>
-                    <p className="mt-1 text-lg font-black text-slate-950">
-                      {authoritativeFairnessAudit.pValue.toFixed(6)}
-                    </p>
-                    <p className="text-[11px] text-slate-500">
-                      χ²={authoritativeFairnessAudit.testStatistic.toFixed(4)} · df={authoritativeFairnessAudit.degreesOfFreedom}
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-[11px] text-slate-500">Run source</p>
-                    <p className="mt-1 text-sm font-bold uppercase tracking-wide text-slate-900">
-                      {authoritativeFairnessAudit.runSource}
-                    </p>
-                    <p className="text-[11px] text-slate-500">{authoritativeFairnessAudit.ranAtIso}</p>
-                  </div>
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-[11px] text-slate-500">Sample size</p>
-                    <p className="mt-1 text-lg font-black text-slate-950">
-                      {authoritativeFairnessAudit.sampleSize.toLocaleString()} packs
-                    </p>
-                    <p className="text-[11px] text-slate-500">
-                      MC applied: {authoritativeFairnessAudit.monteCarloApplied ? "yes" : "no"}
-                    </p>
-                    {authoritativeFairnessAudit.monteCarloApplied ? (
-                      <p className="text-[11px] text-slate-500">
-                        MC samples: {authoritativeFairnessAudit.monteCarloSamples?.toLocaleString()}
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <div className="rounded-xl border border-slate-200 p-4">
-                    <h3 className="text-sm font-bold text-slate-900">Observed counts (per rarity)</h3>
-                    <ul className="mt-2 space-y-1 text-sm text-slate-700">
-                      {RARITY_TIERS.map((rarity) => (
-                        <li key={`obs-${rarity}`} className="flex items-center justify-between">
-                          <span className="font-mono text-xs uppercase text-slate-500">{rarity}</span>
-                          <span className="tabular-nums">
-                            {authoritativeFairnessAudit.observedCounts[rarity].toLocaleString()}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 p-4">
-                    <h3 className="text-sm font-bold text-slate-900">Expected counts (per rarity)</h3>
-                    <ul className="mt-2 space-y-1 text-sm text-slate-700">
-                      {RARITY_TIERS.map((rarity) => (
-                        <li key={`exp-${rarity}`} className="flex items-center justify-between">
-                          <span className="font-mono text-xs uppercase text-slate-500">{rarity}</span>
-                          <span className="tabular-nums">
-                            {authoritativeFairnessAudit.expectedCounts[rarity].toFixed(2)}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <p className="mt-4 text-sm text-slate-500">No fairness audit result yet. Run on-demand to create one.</p>
-            )}
+          {/* DEMO SECTION: three-col top auctions / worst packs / integrity */}
+          <section className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-3">
+            <TopAuctionsList auctions={state.bundle.topAuctions} />
+            <WorstPacksList packs={state.bundle.worstPacks} />
+            <IntegrityList integrity={state.bundle.integrity} />
           </section>
 
-          <section className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-            <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Drop Engagement</p>
-              <p className="mt-2 text-sm text-slate-600">
+          {/* WHAT-IF SIMULATOR */}
+          <WhatIfSimulatorStub bundle={state.bundle} />
+
+          <section className="grid grid-cols-1 gap-3 xl:grid-cols-3">
+            <div className="rounded-pv-lg border border-pv-line bg-pv-surface-2 p-5">
+              <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                Drop engagement
+              </p>
+              <p className="mt-2 text-[13px] text-pv-muted">
                 purchases/user avg{" "}
-                <span className="font-semibold text-slate-900">
+                <span className="font-extrabold text-pv-text">
                   {state.bundle.userHealth.dropEngagement.purchasesPerUserAvg.toFixed(2)}
                 </span>
               </p>
-              <p className="mt-1 text-sm text-slate-600">
+              <p className="mt-1 text-[13px] text-pv-muted">
                 sellout avg{" "}
-                <span className="font-semibold text-slate-900">
+                <span className="font-extrabold text-pv-text">
                   {state.bundle.userHealth.dropEngagement.selloutTimeAvgSeconds === null
                     ? "n/a"
                     : `${Math.round(state.bundle.userHealth.dropEngagement.selloutTimeAvgSeconds)}s`}
                 </span>
               </p>
-              <p className="mt-2 text-xs text-slate-500">
-                fill buckets · &lt;25% {state.bundle.userHealth.dropEngagement.dropfillDistribution.lt25} ·
-                25-50% {state.bundle.userHealth.dropEngagement.dropfillDistribution.gte25Lt50} ·
-                50-75% {state.bundle.userHealth.dropEngagement.dropfillDistribution.gte50Lt75} ·
-                ≥75% {state.bundle.userHealth.dropEngagement.dropfillDistribution.gte75}
+              <p className="mt-2 text-[11px] text-pv-muted">
+                fill buckets · &lt;25% {state.bundle.userHealth.dropEngagement.dropfillDistribution.lt25}
+                · 25-50% {state.bundle.userHealth.dropEngagement.dropfillDistribution.gte25Lt50} · 50-75%{" "}
+                {state.bundle.userHealth.dropEngagement.dropfillDistribution.gte50Lt75} · ≥75%{" "}
+                {state.bundle.userHealth.dropEngagement.dropfillDistribution.gte75}
               </p>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Auction Participation</p>
-              <p className="mt-2 text-sm text-slate-600">
+            <div className="rounded-pv-lg border border-pv-line bg-pv-surface-2 p-5">
+              <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                Auction participation
+              </p>
+              <p className="mt-2 text-[13px] text-pv-muted">
                 bids/auction avg{" "}
-                <span className="font-semibold text-slate-900">
+                <span className="font-extrabold text-pv-text">
                   {state.bundle.userHealth.auctionParticipation.bidsPerAuctionAvg.toFixed(2)}
                 </span>
               </p>
-              <p className="mt-1 text-sm text-slate-600">
+              <p className="mt-1 text-[13px] text-pv-muted">
                 unique bidders/auction avg{" "}
-                <span className="font-semibold text-slate-900">
+                <span className="font-extrabold text-pv-text">
                   {state.bundle.userHealth.auctionParticipation.uniqueBiddersPerAuctionAvg.toFixed(2)}
                 </span>
               </p>
-              <p className="mt-2 text-xs text-slate-500">
-                watcher count avg: {state.bundle.userHealth.auctionParticipation.watcherCountAvg ?? "n/a"} (
-                {state.bundle.userHealth.auctionParticipation.watcherCountMetricSource})
+              <p className="mt-2 text-[11px] text-pv-muted">
+                watcher count avg: {state.bundle.userHealth.auctionParticipation.watcherCountAvg ?? "n/a"}{" "}
+                ({state.bundle.userHealth.auctionParticipation.watcherCountMetricSource})
               </p>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">Retention</p>
-              <p className="mt-2 text-sm text-slate-600">
+            <div className="rounded-pv-lg border border-pv-line bg-pv-surface-2 p-5">
+              <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">Retention</p>
+              <p className="mt-2 text-[13px] text-pv-muted">
                 cohort buyers{" "}
-                <span className="font-semibold text-slate-900">
+                <span className="font-extrabold text-pv-text">
                   {state.bundle.userHealth.retention.cohortBuyerCount.toLocaleString()}
                 </span>
               </p>
-              <p className="mt-1 text-sm text-slate-600">
+              <p className="mt-1 text-[13px] text-pv-muted">
                 D1 returning{" "}
-                <span className="font-semibold text-slate-900">
+                <span className="font-extrabold text-pv-text">
                   {state.bundle.userHealth.retention.d1ReturningBuyerCount.toLocaleString()} (
                   {formatRate(state.bundle.userHealth.retention.d1Rate)})
                 </span>
               </p>
-              <p className="mt-1 text-sm text-slate-600">
+              <p className="mt-1 text-[13px] text-pv-muted">
                 D7 returning{" "}
-                <span className="font-semibold text-slate-900">
+                <span className="font-extrabold text-pv-text">
                   {state.bundle.userHealth.retention.d7ReturningBuyerCount.toLocaleString()} (
                   {formatRate(state.bundle.userHealth.retention.d7Rate)})
                 </span>
@@ -503,33 +382,11 @@ export default function AdminEconomicsPage(): JSX.Element {
             </div>
           </section>
 
-          <section className="grid grid-cols-1 gap-4 xl:grid-cols-[2fr_1fr]">
-            <div className="rounded-2xl border border-slate-200 bg-white p-6">
-              <RevenueTimeChart series={state.summary.hourlySeries} />
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-white p-6">
-              <RevenueMixDonut summary={state.summary} />
-            </div>
-          </section>
-
-          <PackTierTable tiers={state.bundle.tiers} portfolio={state.bundle.portfolio} />
-
-          <WhatIfSimulatorStub bundle={state.bundle} />
-
-          <section className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-12">
-            <div className="lg:col-span-5 lg:flex">
-              <WorstPacksList packs={state.bundle.worstPacks} />
-            </div>
-            <div className="lg:col-span-7 lg:flex">
-              <TopAuctionsList auctions={state.bundle.topAuctions} />
-            </div>
-          </section>
-
-          <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 text-xs text-slate-500">
-            <p>
-              Pack margin is the primary revenue lever. Showing theoretical vs actual house edge reframes the
-              &ldquo;ripoff or sustainable&rdquo; question as a number you can defend — edge decreases by tier on purpose
-              (commitment reward), and fees are a floor, not the ceiling.
+          <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-pv-line pt-4 text-[11px] text-pv-muted">
+            <p className="max-w-[720px]">
+              Pack margin is the primary revenue lever. Showing theoretical vs actual house edge reframes
+              the &ldquo;ripoff or sustainable&rdquo; question as a number you can defend — edge decreases
+              by tier on purpose (commitment reward), and fees are a floor, not the ceiling.
             </p>
             {footerProvenance ? <span className="font-mono">{footerProvenance}</span> : null}
           </footer>

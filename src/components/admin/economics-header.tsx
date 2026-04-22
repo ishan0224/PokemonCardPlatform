@@ -1,5 +1,8 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
+import { Segmented } from "@/components/ui/segmented";
+
 export type WindowPreset = "1h" | "24h" | "7d" | "31d";
 
 type EconomicsHeaderProps = {
@@ -11,11 +14,11 @@ type EconomicsHeaderProps = {
   refreshing: boolean;
 };
 
-const PRESETS: Array<{ value: WindowPreset; label: string }> = [
-  { value: "1h", label: "1h" },
-  { value: "24h", label: "24h" },
-  { value: "7d", label: "7d" },
-  { value: "31d", label: "31d" }
+const PRESETS: Array<{ id: WindowPreset; label: string }> = [
+  { id: "1h", label: "1h" },
+  { id: "24h", label: "24h" },
+  { id: "7d", label: "7d" },
+  { id: "31d", label: "31d" }
 ];
 
 function formatWindowRange(fromIso: string, toIso: string): string {
@@ -43,50 +46,34 @@ export function EconomicsHeader({
   refreshing
 }: EconomicsHeaderProps): JSX.Element {
   return (
-    <header className="flex flex-wrap items-center gap-3 border-b border-slate-200 pb-4">
-      <div className="flex items-center gap-2 text-xs text-slate-500">
-        <span>Admin</span>
-        <span>/</span>
-        <span className="font-semibold text-slate-900">Economics</span>
-      </div>
-      <div className="ml-auto flex flex-wrap items-center gap-2">
-        <div className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-mono text-xs text-slate-600">
-          {formatWindowRange(fromIso, toIso)}
-        </div>
-        <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-0.5 text-xs font-semibold">
-          {PRESETS.map((option) => {
-            const active = option.value === preset;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => onPresetChange(option.value)}
-                className={`rounded-md px-3 py-1 transition ${
-                  active ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"
-                }`}
-              >
-                {option.label}
-              </button>
-            );
-          })}
-        </div>
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={refreshing}
-          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {refreshing ? "Refreshing…" : "Refresh"}
-        </button>
-        <button
-          type="button"
-          disabled
-          title="CSV export is deferred — see docs/phase-8-implementation-plan.md §5."
-          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-400 cursor-not-allowed"
-        >
-          Export CSV
-        </button>
-      </div>
-    </header>
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      <span className="rounded-[10px] border border-pv-line bg-pv-surface-3 px-3 py-1.5 font-mono text-[11px] text-pv-muted">
+        {formatWindowRange(fromIso, toIso)}
+      </span>
+      <Segmented
+        value={preset}
+        options={PRESETS}
+        onChange={onPresetChange}
+        ariaLabel="Economics time window"
+      />
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        onClick={onRefresh}
+        disabled={refreshing}
+      >
+        {refreshing ? "Refreshing…" : "Refresh"}
+      </Button>
+      <Button
+        type="button"
+        variant="primary"
+        size="sm"
+        disabled
+        title="Rebalance flow is gated by admin-drop editor."
+      >
+        Rebalance
+      </Button>
+    </div>
   );
 }

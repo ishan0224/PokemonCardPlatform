@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { CardImage } from "@/components/ui/card-image";
 import { CardShell } from "@/components/ui/card-shell";
+import { Chip } from "@/components/ui/chip";
 import { buttonClassName } from "@/components/ui/button";
 import { formatDateTime, formatMoneyCents, formatTierLabel } from "@/lib/format";
 import { routes } from "@/lib/routes";
@@ -17,21 +18,20 @@ type PackSummaryCardProps = {
 };
 
 export function PackSummaryCard({ pack }: PackSummaryCardProps): JSX.Element {
-  const statusLabel = pack.opened ? "Opened" : "Unopened";
-  const statusTheme = pack.opened ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-900";
-
   const header = (
     <div className="flex items-start justify-between gap-2">
-      <div>
-        <p className="text-xs font-bold uppercase tracking-wide text-pv-muted">{formatTierLabel(pack.tier)}</p>
-        <h3 className="mt-1 text-base font-black text-pv-ink">{pack.dropName}</h3>
+      <div className="min-w-0">
+        <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted">
+          {formatTierLabel(pack.tier)}
+        </p>
+        <h3 className="mt-1 truncate text-[14px] font-bold text-pv-text">{pack.dropName}</h3>
       </div>
-      <span className={`rounded-full px-2 py-1 text-xs font-bold ${statusTheme}`}>{statusLabel}</span>
+      {pack.opened ? <Chip tone="completed">Opened</Chip> : <Chip tone="gold">Unopened</Chip>}
     </div>
   );
 
   const media = (
-    <div className="flex justify-center">
+    <div className={`flex justify-center ${pack.opened ? "opacity-60" : ""}`}>
       <CardImage
         src={DROP_PACK_IMAGE_BY_TIER[pack.tier]}
         alt={`${formatTierLabel(pack.tier)} pack`}
@@ -42,16 +42,19 @@ export function PackSummaryCard({ pack }: PackSummaryCardProps): JSX.Element {
   );
 
   const body = (
-    <div className="space-y-2 text-sm text-pv-muted">
-      <p>
-        Scheduled <span className="font-semibold text-pv-ink">{formatDateTime(pack.dropScheduledAt)}</span>
-      </p>
-      <p>
-        Purchased <span className="font-semibold text-pv-ink">{formatDateTime(pack.purchasedAt)}</span>
-      </p>
-      <p>
-        Paid <span className="font-semibold text-pv-ink">{formatMoneyCents(pack.pricePaid)}</span>
-      </p>
+    <div className="space-y-1.5 text-[12px]">
+      <div className="flex items-center justify-between">
+        <span className="text-pv-muted">Scheduled</span>
+        <span className="font-semibold text-pv-text">{formatDateTime(pack.dropScheduledAt)}</span>
+      </div>
+      <div className="flex items-center justify-between">
+        <span className="text-pv-muted">Purchased</span>
+        <span className="font-semibold text-pv-text">{formatDateTime(pack.purchasedAt)}</span>
+      </div>
+      <div className="flex items-center justify-between">
+        <span className="text-pv-muted">Paid</span>
+        <span className="font-extrabold tabular-nums text-pv-text">{formatMoneyCents(pack.pricePaid)}</span>
+      </div>
     </div>
   );
 
@@ -59,7 +62,7 @@ export function PackSummaryCard({ pack }: PackSummaryCardProps): JSX.Element {
     <Link
       href={routes.packs.reveal(pack.id)}
       className={buttonClassName({
-        variant: pack.opened ? "secondary" : "primary",
+        variant: pack.opened ? "secondary" : "gold",
         size: "sm",
         fullWidth: true
       })}
@@ -68,5 +71,14 @@ export function PackSummaryCard({ pack }: PackSummaryCardProps): JSX.Element {
     </Link>
   );
 
-  return <CardShell header={header} media={media} body={body} actions={actions} variant="surface" className="min-h-[420px]" />;
+  return (
+    <CardShell
+      header={header}
+      media={media}
+      body={body}
+      actions={actions}
+      variant="surface"
+      className="min-h-[420px]"
+    />
+  );
 }

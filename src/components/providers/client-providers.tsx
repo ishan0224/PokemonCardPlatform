@@ -2,7 +2,6 @@
 
 import type { ReactNode } from "react";
 import { SWRConfig } from "swr";
-import { NotificationsProvider } from "@/components/providers/notifications-provider";
 import { AuthProvider } from "@/hooks/use-auth";
 import type { ServerSessionUser } from "@/server/auth/session";
 
@@ -21,9 +20,7 @@ export function ClientProviders({ children, initialSession = null }: ClientProvi
         keepPreviousData: true
       }}
     >
-      <AuthProvider initialSession={initialSession}>
-        <NotificationsProvider>{children}</NotificationsProvider>
-      </AuthProvider>
+      <AuthProvider initialSession={initialSession}>{children}</AuthProvider>
     </SWRConfig>
   );
 }

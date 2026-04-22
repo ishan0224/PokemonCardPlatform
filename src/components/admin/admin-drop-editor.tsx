@@ -387,46 +387,87 @@ export function AdminDropEditor({
 
   return (
     <section className="space-y-5">
-      <header className="rounded-2xl border border-pv-border bg-white p-5 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-black text-pv-ink">{mode === "create" ? "Schedule Drop" : "Edit Drop"}</h1>
-            <p className="mt-1 text-sm text-pv-muted">
-              Configure schedule and pack composition, then publish when readiness checks pass.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="secondary" onClick={() => router.push(routes.admin.drops)}>
-              Back to drops
+      {/* Back breadcrumb */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3 text-[12px]">
+          <button
+            type="button"
+            onClick={() => router.push(routes.admin.drops)}
+            className="text-pv-muted hover:text-pv-text"
+          >
+            ← Drops
+          </button>
+          <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+            {mode === "create" ? "New drop" : "Edit drop"}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={() => router.push(routes.admin.drops)}>
+            Discard
+          </Button>
+          <Button variant="secondary" size="sm" loading={savePending} onClick={() => void onSave()}>
+            {savePending ? "Saving…" : "Save draft"}
+          </Button>
+          {mode === "edit" && initialStatus === "draft" ? (
+            <Button variant="primary" size="sm" loading={publishPending} onClick={() => void onPublish()}>
+              {publishPending ? "Publishing…" : "Publish"}
             </Button>
-            {mode === "edit" && initialStatus === "draft" ? (
-              <Button variant="primary" loading={publishPending} onClick={() => void onPublish()}>
-                {publishPending ? "Publishing..." : "Publish"}
-              </Button>
-            ) : null}
-            <Button variant="primary" loading={savePending} onClick={() => void onSave()}>
-              {savePending ? "Saving..." : "Save"}
-            </Button>
-          </div>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Page header */}
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-pv-h1">
+            {mode === "create" ? "Schedule a drop" : "Edit drop"}
+          </h1>
+          <p className="mt-1 text-[13px] text-pv-muted">
+            Drafts pin a generation version at save-time. Publish flips the gate.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center rounded-full border border-pv-line bg-pv-surface-2 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.04em] text-pv-muted">
+            Status · {initialStatus ?? "Draft"}
+          </span>
+          <span className="inline-flex items-center rounded-full border border-pv-line bg-pv-surface-2 px-2.5 py-1 font-mono text-[11px] text-pv-muted">
+            pack-gen-v2-deterministic
+          </span>
         </div>
       </header>
 
-      {formError ? <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{formError}</p> : null}
+      {formError ? (
+        <p
+          role="alert"
+          className="rounded-pv-sm border border-pv-accent/30 bg-[rgba(239,68,68,0.08)] p-3 text-sm font-medium text-[#fca5a5]"
+        >
+          {formError}
+        </p>
+      ) : null}
       {successMessage ? (
-        <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{successMessage}</p>
+        <p className="rounded-pv-sm border border-pv-good/30 bg-[rgba(16,185,129,0.06)] p-3 text-sm font-medium text-pv-good">
+          {successMessage}
+        </p>
       ) : null}
 
       <div className="grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
-        <section className="rounded-2xl border border-pv-border bg-white p-4 shadow-sm">
-          <div role="tablist" aria-label="Drop editor tabs" className="mb-4 flex gap-2" onKeyDown={onTabKeyDown}>
+        <section className="rounded-pv-lg border border-pv-line bg-pv-surface-2 p-4">
+          <div
+            role="tablist"
+            aria-label="Drop editor tabs"
+            className="mb-4 flex gap-1.5 border-b border-pv-line"
+            onKeyDown={onTabKeyDown}
+          >
             <button
               type="button"
               role="tab"
               aria-selected={tab === "schedule"}
               aria-controls="drop-tab-schedule"
               id="drop-tab-trigger-schedule"
-              className={`rounded-lg px-3 py-2 text-sm font-semibold ${
-                tab === "schedule" ? "bg-pv-accent text-white" : "bg-pv-parchment-soft text-pv-ink"
+              className={`px-[14px] py-2.5 text-[13px] font-bold transition-colors ${
+                tab === "schedule"
+                  ? "border-b-2 border-pv-gold text-pv-text"
+                  : "border-b-2 border-transparent text-pv-muted hover:text-pv-text"
               }`}
               onClick={() => setTab("schedule")}
             >
@@ -438,27 +479,29 @@ export function AdminDropEditor({
               aria-selected={tab === "composition"}
               aria-controls="drop-tab-composition"
               id="drop-tab-trigger-composition"
-              className={`rounded-lg px-3 py-2 text-sm font-semibold ${
-                tab === "composition" ? "bg-pv-accent text-white" : "bg-pv-parchment-soft text-pv-ink"
+              className={`px-[14px] py-2.5 text-[13px] font-bold transition-colors ${
+                tab === "composition"
+                  ? "border-b-2 border-pv-gold text-pv-text"
+                  : "border-b-2 border-transparent text-pv-muted hover:text-pv-text"
               }`}
               onClick={() => setTab("composition")}
             >
-              Pack composition
+              Composition
             </button>
           </div>
 
           {tab === "schedule" ? (
             <div id="drop-tab-schedule" role="tabpanel" aria-labelledby="drop-tab-trigger-schedule" className="space-y-4">
-              <label className="block text-sm font-semibold text-pv-ink">
+              <label className="block text-sm font-semibold text-pv-text">
                 Name
                 <input
                   value={draft.name}
                   onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
-                  className="mt-1 w-full rounded-lg border border-pv-border px-3 py-2 text-sm"
+                  className="mt-1 w-full min-h-10 rounded-[10px] border border-pv-line bg-pv-surface-3 px-3 py-2 text-[13px] text-pv-text outline-none transition focus:border-pv-line-strong focus:ring-[3px] focus:ring-pv-gold/10"
                 />
               </label>
 
-              <label className="block text-sm font-semibold text-pv-ink">
+              <label className="block text-sm font-semibold text-pv-text">
                 Scheduled At (local time)
                 <input
                   type="datetime-local"
@@ -469,12 +512,12 @@ export function AdminDropEditor({
                       setDraft((current) => ({ ...current, scheduledAt: nextIso }));
                     }
                   }}
-                  className="mt-1 w-full rounded-lg border border-pv-border px-3 py-2 text-sm"
+                  className="mt-1 w-full min-h-10 rounded-[10px] border border-pv-line bg-pv-surface-3 px-3 py-2 text-[13px] text-pv-text outline-none transition focus:border-pv-line-strong focus:ring-[3px] focus:ring-pv-gold/10"
                 />
               </label>
               <p className="text-xs text-pv-muted">UTC preview: {formatDateTime(draft.scheduledAt)}</p>
 
-              <label className="inline-flex items-center gap-2 text-sm text-pv-ink">
+              <label className="inline-flex items-center gap-2 text-sm text-pv-text">
                 <input
                   type="checkbox"
                   checked={draft.lotteryEnabled}
@@ -488,7 +531,7 @@ export function AdminDropEditor({
                 Enable waiting-room lottery
               </label>
 
-              <label className="block text-sm font-semibold text-pv-ink">
+              <label className="block text-sm font-semibold text-pv-text">
                 Max packs per user (drop-wide)
                 <input
                   type="number"
@@ -501,14 +544,14 @@ export function AdminDropEditor({
                       maxPacksPerUser: Math.max(1, Math.trunc(Number(event.target.value) || 1))
                     }))
                   }
-                  className="mt-1 w-full rounded-lg border border-pv-border px-3 py-2 text-sm"
+                  className="mt-1 w-full min-h-10 rounded-[10px] border border-pv-line bg-pv-surface-3 px-3 py-2 text-[13px] text-pv-text outline-none transition focus:border-pv-line-strong focus:ring-[3px] focus:ring-pv-gold/10"
                 />
               </label>
 
               <div className="space-y-3">
                 {draft.tiers.map((tier) => (
-                  <section key={tier.tier} className="rounded-lg border border-pv-border p-3">
-                    <p className="text-sm font-black text-pv-ink">{tier.tier}</p>
+                  <section key={tier.tier} className="rounded-pv border border-pv-line bg-pv-surface-3 p-3">
+                    <p className="text-sm font-black text-pv-text">{tier.tier}</p>
                     <div className="mt-2 grid gap-2 sm:grid-cols-2">
                       <label className="text-xs font-semibold text-pv-muted">
                         Price (cents)
@@ -522,7 +565,7 @@ export function AdminDropEditor({
                               price: Math.max(50, Math.trunc(Number(event.target.value) || 50))
                             }))
                           }
-                          className="mt-1 w-full rounded-lg border border-pv-border px-2 py-1 text-sm"
+                          className="mt-1 w-full min-h-9 rounded-[10px] border border-pv-line bg-pv-surface-3 px-3 py-1.5 text-[13px] text-pv-text outline-none transition focus:border-pv-line-strong focus:ring-[3px] focus:ring-pv-gold/10"
                         />
                       </label>
                       <label className="text-xs font-semibold text-pv-muted">
@@ -537,7 +580,7 @@ export function AdminDropEditor({
                               totalInventory: Math.max(1, Math.trunc(Number(event.target.value) || 1))
                             }))
                           }
-                          className="mt-1 w-full rounded-lg border border-pv-border px-2 py-1 text-sm"
+                          className="mt-1 w-full min-h-9 rounded-[10px] border border-pv-line bg-pv-surface-3 px-3 py-1.5 text-[13px] text-pv-text outline-none transition focus:border-pv-line-strong focus:ring-[3px] focus:ring-pv-gold/10"
                         />
                       </label>
                     </div>
@@ -547,14 +590,16 @@ export function AdminDropEditor({
             </div>
           ) : (
             <div id="drop-tab-composition" role="tabpanel" aria-labelledby="drop-tab-trigger-composition" className="space-y-4">
-              <div className="flex flex-wrap gap-2">
+              <div className="inline-flex gap-0.5 rounded-[10px] border border-pv-line bg-pv-surface-2 p-[3px]">
                 {TIER_ORDER.map((tier) => (
                   <button
                     key={tier}
                     type="button"
                     onClick={() => setActiveTier(tier)}
-                    className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                      activeTier === tier ? "bg-pv-accent text-white" : "bg-pv-parchment-soft text-pv-ink"
+                    className={`rounded-[7px] px-3 py-1.5 text-[12px] font-bold capitalize transition-colors ${
+                      activeTier === tier
+                        ? "bg-pv-surface-4 text-pv-text"
+                        : "text-pv-muted hover:text-pv-text"
                     }`}
                   >
                     {tier}
@@ -562,14 +607,14 @@ export function AdminDropEditor({
                 ))}
               </div>
 
-              <section className="space-y-2 rounded-lg border border-pv-border p-3">
-                <p className="text-sm font-black text-pv-ink">Set filter</p>
+              <section className="space-y-2 rounded-pv border border-pv-line bg-pv-surface-3 p-3">
+                <p className="text-sm font-black text-pv-text">Set filter</p>
                 <p className="text-xs text-pv-muted">Choose sets for {activeTier}. Leave empty to include all sets.</p>
                 <div className="max-h-44 space-y-1 overflow-auto pr-1">
                   {setItems.map((setItem) => {
                     const checked = activeTierInput.composition.setKeys.includes(setItem.setKey);
                     return (
-                      <label key={setItem.setKey} className="flex items-center justify-between gap-2 rounded border border-pv-border px-2 py-1 text-xs">
+                      <label key={setItem.setKey} className="flex items-center justify-between gap-2 rounded-pv-sm border border-pv-line bg-pv-surface-3 px-2 py-1 text-[12px] text-pv-text">
                         <span>
                           {setItem.setName} <span className="text-pv-muted">({setItem.totalCount})</span>
                         </span>
@@ -585,13 +630,13 @@ export function AdminDropEditor({
                 ) : null}
               </section>
 
-              <section className="space-y-2 rounded-lg border border-pv-border p-3">
-                <p className="text-sm font-black text-pv-ink">Included rarities</p>
+              <section className="space-y-2 rounded-pv border border-pv-line bg-pv-surface-3 p-3">
+                <p className="text-sm font-black text-pv-text">Included rarities</p>
                 <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
                   {RARITY_ORDER.map((rarity) => {
                     const checked = activeTierInput.composition.includedRarities.includes(rarity);
                     return (
-                      <label key={rarity} className="flex items-center gap-2 rounded border border-pv-border px-2 py-1 text-xs">
+                      <label key={rarity} className="flex items-center gap-2 rounded-pv-sm border border-pv-line bg-pv-surface-3 px-2 py-1 text-[12px] text-pv-text">
                         <input type="checkbox" checked={checked} onChange={() => toggleRarity(rarity)} />
                         {rarity}
                       </label>
@@ -600,13 +645,13 @@ export function AdminDropEditor({
                 </div>
               </section>
 
-              <section className="space-y-2 rounded-lg border border-pv-border p-3">
-                <p className="text-sm font-black text-pv-ink">Explicit card include/exclude</p>
+              <section className="space-y-2 rounded-pv border border-pv-line bg-pv-surface-3 p-3">
+                <p className="text-sm font-black text-pv-text">Explicit card include/exclude</p>
                 <input
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
                   placeholder="Search cards by name, set, or TCG ID"
-                  className="w-full rounded-lg border border-pv-border px-3 py-2 text-sm"
+                  className="w-full min-h-10 rounded-[10px] border border-pv-line bg-pv-surface-3 px-3 py-2 text-[13px] text-pv-text outline-none transition focus:border-pv-line-strong focus:ring-[3px] focus:ring-pv-gold/10"
                 />
 
                 <div aria-live="polite" className="text-xs text-pv-muted">
@@ -615,8 +660,8 @@ export function AdminDropEditor({
 
                 <div className="max-h-56 space-y-1 overflow-auto pr-1">
                   {searchItems.map((card) => (
-                    <div key={card.id} className="rounded border border-pv-border px-2 py-1 text-xs">
-                      <p className="font-semibold text-pv-ink">{card.name}</p>
+                    <div key={card.id} className="rounded-pv-sm border border-pv-line bg-pv-surface-3 px-2 py-1 text-[12px] text-pv-text">
+                      <p className="font-semibold text-pv-text">{card.name}</p>
                       <p className="text-pv-muted">
                         {card.rarityTier} · {card.setName} · {formatMoneyCents(card.currentPrice)}
                       </p>
@@ -639,26 +684,26 @@ export function AdminDropEditor({
                 ) : null}
 
                 <div className="grid gap-2 sm:grid-cols-2">
-                  <div className="rounded border border-pv-border p-2">
-                    <p className="text-xs font-semibold text-pv-ink">Explicit includes</p>
+                  <div className="rounded-pv-sm border border-pv-line bg-pv-surface-3 p-2">
+                    <p className="text-xs font-semibold text-pv-text">Explicit includes</p>
                     <ul className="mt-1 space-y-1">
                       {activeTierInput.composition.explicitIncludeCardIds.map((cardId) => (
                         <li key={cardId} className="flex items-center justify-between gap-2 text-xs text-pv-muted">
                           <span className="truncate">{cardId}</span>
-                          <button className="text-rose-700" onClick={() => removeExplicitCardId("include", cardId)}>
+                          <button className="text-pv-accent" onClick={() => removeExplicitCardId("include", cardId)}>
                             Remove
                           </button>
                         </li>
                       ))}
                     </ul>
                   </div>
-                  <div className="rounded border border-pv-border p-2">
-                    <p className="text-xs font-semibold text-pv-ink">Explicit excludes</p>
+                  <div className="rounded-pv-sm border border-pv-line bg-pv-surface-3 p-2">
+                    <p className="text-xs font-semibold text-pv-text">Explicit excludes</p>
                     <ul className="mt-1 space-y-1">
                       {activeTierInput.composition.explicitExcludeCardIds.map((cardId) => (
                         <li key={cardId} className="flex items-center justify-between gap-2 text-xs text-pv-muted">
                           <span className="truncate">{cardId}</span>
-                          <button className="text-rose-700" onClick={() => removeExplicitCardId("exclude", cardId)}>
+                          <button className="text-pv-accent" onClick={() => removeExplicitCardId("exclude", cardId)}>
                             Remove
                           </button>
                         </li>
@@ -671,18 +716,29 @@ export function AdminDropEditor({
           )}
         </section>
 
-        <aside className="rounded-2xl border border-pv-border bg-white p-4 shadow-sm">
-          <h2 className="text-lg font-black text-pv-ink">Live preview</h2>
-          <p className="mt-1 text-xs text-pv-muted">UTC schedule: {formatDateTime(draft.scheduledAt)}</p>
-          {previewLoading ? <p className="mt-2 text-xs text-pv-muted">Refreshing preview...</p> : null}
-          {previewError ? <p className="mt-2 text-xs text-rose-700">{previewError}</p> : null}
+        <aside className="rounded-pv-lg border border-pv-line bg-pv-surface-2 p-5 lg:sticky lg:top-[92px] lg:self-start">
+          <div className="flex items-center justify-between">
+            <h2 className="text-pv-h3">Live preview</h2>
+            <span className="rounded-full border border-pv-line bg-pv-surface-3 px-2.5 py-1 font-mono text-[11px] text-pv-muted">
+              debounced · 350ms
+            </span>
+          </div>
+          <p className="mt-1 text-[12px] text-pv-muted">
+            UTC schedule: {formatDateTime(draft.scheduledAt)}
+          </p>
+          {previewLoading ? (
+            <p className="mt-2 text-[12px] text-pv-muted">Refreshing preview…</p>
+          ) : null}
+          {previewError ? (
+            <p className="mt-2 text-[12px] text-pv-accent">{previewError}</p>
+          ) : null}
 
           <div className="mt-3 space-y-3">
             {TIER_ORDER.map((tier) => {
               const tierPreview = previewByTier[tier];
               return (
-                <section key={tier} className="rounded-lg border border-pv-border bg-pv-parchment-soft p-3">
-                  <p className="text-sm font-bold text-pv-ink">{tier}</p>
+                <section key={tier} className="rounded-pv border border-pv-line bg-pv-surface-3 p-3">
+                  <p className="text-sm font-bold text-pv-text">{tier}</p>
                   {tierPreview ? (
                     <>
                       <p className="mt-1 text-xs text-pv-muted">Cards/pack: {tierPreview.cardsPerPack}</p>
@@ -700,11 +756,11 @@ export function AdminDropEditor({
                           </p>
                         ))}
                       </div>
-                      <p className={`mt-2 text-xs font-semibold ${tierPreview.readiness.ready ? "text-emerald-700" : "text-rose-700"}`}>
+                      <p className={`mt-2 text-xs font-semibold ${tierPreview.readiness.ready ? "text-pv-good" : "text-pv-accent"}`}>
                         {tierPreview.readiness.ready ? "Ready to activate" : "Needs more eligible cards"}
                       </p>
                       {tierPreview.readiness.issues.map((issue) => (
-                        <p key={`${tier}-${issue.rarity}`} className="text-xs text-rose-700">
+                        <p key={`${tier}-${issue.rarity}`} className="text-xs text-pv-accent">
                           {issue.rarity}: required {issue.required}, found {issue.actual}
                         </p>
                       ))}

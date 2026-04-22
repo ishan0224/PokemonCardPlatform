@@ -20,18 +20,29 @@ export function SidebarNav({ mobile = false }: SidebarNavProps): JSX.Element {
   const sections = getNavSections(user?.role ?? null);
 
   return (
-    <aside className="flex h-full flex-col" aria-label={mobile ? "Mobile navigation" : "Sidebar navigation"}>
-      <div className="px-4 pb-3 pt-4">
-        <Link href={routes.home} className="inline-flex items-center text-xl font-black tracking-tight text-pv-ink">
+    <aside
+      className="flex h-full flex-col gap-6 px-3 py-5 text-pv-text"
+      aria-label={mobile ? "Mobile navigation" : "Sidebar navigation"}
+    >
+      <div className="px-2 py-1">
+        <Link
+          href={routes.home}
+          className="inline-flex items-center gap-2.5 text-[18px] font-black tracking-tight text-pv-text"
+        >
+          <span className="grid h-7 w-7 place-items-center rounded-pv-sm bg-gradient-to-br from-white to-pv-gold text-[14px] font-black text-pv-surface">
+            PV
+          </span>
           PullVault
         </Link>
       </div>
 
-      <nav className="flex-1 space-y-5 px-3" aria-label="Primary">
+      <nav className="flex-1 space-y-6" aria-label="Primary">
         {sections.map((section) => (
-          <section key={section.id} aria-label={section.label}>
-            <p className="px-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-pv-muted">{section.label}</p>
-            <ul className="mt-2 space-y-1">
+          <section key={section.id} aria-label={section.label} className="space-y-0.5">
+            <p className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-pv-muted-2">
+              {section.label}
+            </p>
+            <ul className="space-y-0.5">
               {section.items.map((item) => {
                 const active = isActiveNavPath(currentPath, item.href);
 
@@ -43,13 +54,11 @@ export function SidebarNav({ mobile = false }: SidebarNavProps): JSX.Element {
                       data-nav-href={item.href}
                       data-active={active ? "true" : "false"}
                       aria-current={active ? "page" : undefined}
-                      className="group flex min-h-11 items-center justify-between rounded-lg px-3 py-2 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pv-accent focus-visible:ring-offset-2 focus-visible:ring-offset-pv-parchment data-[active=true]:bg-pv-accent data-[active=true]:text-white data-[active=false]:text-pv-ink data-[active=false]:hover:bg-pv-parchment-soft"
+                      className="group flex min-h-11 items-center gap-2.5 rounded-[10px] px-3 py-[9px] text-[13px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pv-gold focus-visible:ring-offset-2 focus-visible:ring-offset-[#08080b] data-[active=true]:bg-pv-gold-soft data-[active=true]:text-pv-gold data-[active=true]:shadow-[inset_0_0_0_1px_rgba(255,234,155,0.18)] data-[active=false]:text-pv-muted data-[active=false]:hover:bg-pv-surface-2 data-[active=false]:hover:text-pv-text"
                     >
-                      <span>{item.label}</span>
+                      <span className="flex-1">{item.label}</span>
                       {item.stub ? (
-                        <span
-                          className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide group-data-[active=true]:bg-white/20 group-data-[active=true]:text-white group-data-[active=false]:bg-pv-parchment-soft group-data-[active=false]:text-pv-muted"
-                        >
+                        <span className="rounded-full bg-pv-surface-3 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-pv-muted group-data-[active=true]:bg-white/15 group-data-[active=true]:text-pv-gold">
                           Soon
                         </span>
                       ) : null}
@@ -62,7 +71,7 @@ export function SidebarNav({ mobile = false }: SidebarNavProps): JSX.Element {
         ))}
       </nav>
 
-      <div className="mt-4 border-t border-pv-border p-3">
+      <div className="mt-auto">
         <SidebarAccountMenu />
       </div>
       <SidebarNavActiveSync />

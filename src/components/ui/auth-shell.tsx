@@ -22,19 +22,23 @@ export function AuthShell({
   auxiliaryContent
 }: AuthShellProps): JSX.Element {
   return (
-    <section className="w-full max-w-md rounded-3xl border border-pv-border bg-white p-6 shadow-[0_30px_70px_-40px_rgba(20,23,31,0.55)] sm:p-7">
-      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-pv-muted">PullVault account</p>
-      <h1 className="mt-3 text-3xl font-black text-pv-ink">{title}</h1>
-      <p className="mt-2 text-sm text-pv-muted">{subtitle}</p>
+    <section className="w-full max-w-md rounded-pv-xl border border-pv-line bg-pv-surface-2 p-6 shadow-[0_30px_70px_-40px_rgba(0,0,0,0.8)] sm:p-7">
+      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-pv-muted-2">
+        PullVault account
+      </p>
+      <h1 className="mt-3 text-pv-h1">{title}</h1>
+      <p className="mt-2 text-[13px] text-pv-muted">{subtitle}</p>
       <div className="mt-6">{children}</div>
-      <p className="mt-5 text-sm text-pv-muted">
+      <p className="mt-5 text-[13px] text-pv-muted">
         {footerText}{" "}
-        <Link href={footerLinkHref} className="font-semibold text-pv-accent hover:text-pv-accent-strong">
+        <Link href={footerLinkHref} className="font-bold text-pv-gold hover:underline">
           {footerLinkLabel}
         </Link>
       </p>
-      <LegalLinks compact className="mt-4 border-t border-pv-border pt-3" />
-      {auxiliaryContent ? <div className="mt-5 border-t border-pv-border pt-3">{auxiliaryContent}</div> : null}
+      <LegalLinks compact className="mt-4 border-t border-pv-line pt-3" />
+      {auxiliaryContent ? (
+        <div className="mt-5 border-t border-pv-line pt-3">{auxiliaryContent}</div>
+      ) : null}
     </section>
   );
 }

@@ -299,26 +299,25 @@ async function fetchObservedCounts(
   windowStart: Date,
   windowEnd: Date
 ): Promise<{ counts: Record<RarityTier, number>; totalCards: number; sampleSize: number }> {
-  const [observedResult, sampleResult] = await Promise.all([
-    client.query<ObservedRow>(
-      `SELECT c.rarity_tier::text AS rarity_tier, COUNT(*)::BIGINT AS n
-       FROM cards c
-       JOIN packs p ON p.id = c.pack_id
-       JOIN pack_commitments pc ON pc.pack_id = p.id
-       WHERE p.purchased_at >= $1
-         AND p.purchased_at < $2
-       GROUP BY c.rarity_tier`,
-      [windowStart, windowEnd]
-    ),
-    client.query<CountRow>(
-      `SELECT COUNT(DISTINCT p.id)::BIGINT AS n
-       FROM packs p
-       JOIN pack_commitments pc ON pc.pack_id = p.id
-       WHERE p.purchased_at >= $1
-         AND p.purchased_at < $2`,
-      [windowStart, windowEnd]
-    )
-  ]);
+  // pg Client is single-stream — queries on the same client must be serialised.
+  const observedResult = await client.query<ObservedRow>(
+    `SELECT c.rarity_tier::text AS rarity_tier, COUNT(*)::BIGINT AS n
+     FROM cards c
+     JOIN packs p ON p.id = c.pack_id
+     JOIN pack_commitments pc ON pc.pack_id = p.id
+     WHERE p.purchased_at >= $1
+       AND p.purchased_at < $2
+     GROUP BY c.rarity_tier`,
+    [windowStart, windowEnd]
+  );
+  const sampleResult = await client.query<CountRow>(
+    `SELECT COUNT(DISTINCT p.id)::BIGINT AS n
+     FROM packs p
+     JOIN pack_commitments pc ON pc.pack_id = p.id
+     WHERE p.purchased_at >= $1
+       AND p.purchased_at < $2`,
+    [windowStart, windowEnd]
+  );
 
   const counts = buildZeroCounts();
   let totalCards = 0;

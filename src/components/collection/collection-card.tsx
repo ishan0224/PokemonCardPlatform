@@ -3,10 +3,10 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { StartAuctionDialog } from "@/components/collection/start-auction-dialog";
 import { CardImage } from "@/components/ui/card-image";
-import { CardShell } from "@/components/ui/card-shell";
 import { Button, buttonClassName } from "@/components/ui/button";
+import { Chip } from "@/components/ui/chip";
+import { RarityBadge } from "@/components/ui/rarity-badge";
 import { formatDollarsInputFromCents, formatMoneyCents, parseDollarsInputToCents } from "@/lib/format";
 import { routes } from "@/lib/routes";
 import type { AuctionDurationType } from "@/lib/types";
@@ -26,6 +26,17 @@ type CollectionCardProps = {
   }) => Promise<string>;
 };
 
+type InlineForm = "none" | "list" | "auction";
+
+const DURATION_OPTIONS: Array<{ value: AuctionDurationType; label: string }> = [
+  { value: "1h", label: "1h" },
+  { value: "6h", label: "6h" },
+  { value: "24h", label: "24h" }
+];
+
+const MIN_LISTING_CENTS = 50;
+const MIN_STARTING_BID_CENTS = 50;
+
 export function CollectionCard({
   card,
   listingPending,
@@ -36,70 +47,59 @@ export function CollectionCard({
   onStartAuction
 }: CollectionCardProps): JSX.Element {
   const router = useRouter();
-  const [priceInput, setPriceInput] = useState(() => formatDollarsInputFromCents(Math.max(card.currentPrice, 50)));
+  const [inlineForm, setInlineForm] = useState<InlineForm>("none");
+  const [priceInput, setPriceInput] = useState(() =>
+    formatDollarsInputFromCents(Math.max(card.currentPrice, MIN_LISTING_CENTS))
+  );
+  const [bidInput, setBidInput] = useState(() =>
+    formatDollarsInputFromCents(Math.max(card.currentPrice, MIN_STARTING_BID_CENTS))
+  );
+  const [durationType, setDurationType] = useState<AuctionDurationType>("1h");
   const [localError, setLocalError] = useState<string | null>(null);
-  const [auctionDialogOpen, setAuctionDialogOpen] = useState(false);
-  const [auctionSubmitError, setAuctionSubmitError] = useState<string | null>(null);
-  const [auctionTriggerElement, setAuctionTriggerElement] = useState<HTMLButtonElement | null>(null);
 
   const pnlLabel = useMemo(() => {
     const abs = formatMoneyCents(Math.abs(card.pnl));
     return card.pnl >= 0 ? `+${abs}` : `-${abs}`;
   }, [card.pnl]);
 
+  const closeInlineForm = (): void => {
+    setInlineForm("none");
+    setLocalError(null);
+  };
+
   const onSubmitListing = async (): Promise<void> => {
     const parsed = parseDollarsInputToCents(priceInput);
-    if (parsed === null || parsed < 50) {
+    if (parsed === null || parsed < MIN_LISTING_CENTS) {
       setLocalError("Listing price must be at least $0.50.");
       return;
     }
-
     setLocalError(null);
-    await onCreateListing(card.id, parsed);
-  };
-
-  const onSubmitAuction = async (input: {
-    startingBid: number;
-    durationType: AuctionDurationType;
-  }): Promise<void> => {
     try {
-      setAuctionSubmitError(null);
-      const auctionId = await onStartAuction({
-        card,
-        startingBid: input.startingBid,
-        durationType: input.durationType
-      });
-      setAuctionDialogOpen(false);
-      router.push(routes.auctions.detail(auctionId));
+      await onCreateListing(card.id, parsed);
+      setInlineForm("none");
     } catch (caughtError) {
-      const message = caughtError instanceof Error ? caughtError.message : "Failed to create auction.";
-      setAuctionSubmitError(message);
+      setLocalError(caughtError instanceof Error ? caughtError.message : "Failed to list card.");
     }
   };
 
-  const header = (
-    <div className="flex items-start justify-between gap-2">
-      <div>
-        <p className="text-xs font-bold uppercase tracking-wide text-pv-muted">{card.pokemonCard.rarityTier}</p>
-        <h3 className="mt-1 text-base font-black text-pv-ink">{card.pokemonCard.name}</h3>
-        <p className="text-sm text-pv-muted">{card.pokemonCard.setName}</p>
-      </div>
-      <span
-        className={`rounded-full px-2 py-1 text-xs font-bold uppercase ${
-          card.state === "listed"
-            ? "bg-amber-100 text-amber-800"
-            : card.state === "in_auction"
-              ? "bg-indigo-100 text-indigo-800"
-              : "bg-emerald-100 text-emerald-800"
-        }`}
-      >
-        {card.state}
-      </span>
-    </div>
-  );
+  const onSubmitAuction = async (): Promise<void> => {
+    const parsed = parseDollarsInputToCents(bidInput);
+    if (parsed === null || parsed < MIN_STARTING_BID_CENTS) {
+      setLocalError("Starting bid must be at least $0.50.");
+      return;
+    }
+    setLocalError(null);
+    try {
+      const auctionId = await onStartAuction({ card, startingBid: parsed, durationType });
+      setInlineForm("none");
+      router.push(routes.auctions.detail(auctionId));
+    } catch (caughtError) {
+      setLocalError(caughtError instanceof Error ? caughtError.message : "Failed to create auction.");
+    }
+  };
 
-  const media = (
-    <div className="flex justify-center">
+  const cardImage = (
+    <div className="mb-3 flex justify-center">
       <CardImage
         src={card.pokemonCard.imageUrl}
         hiresSrc={card.pokemonCard.imageUrlHires}
@@ -110,113 +110,265 @@ export function CollectionCard({
     </div>
   );
 
-  const body = (
-    <div className="space-y-3">
-      <div className="grid grid-cols-3 gap-2 text-sm">
-        <div className="rounded-lg bg-pv-parchment-soft p-2">
-          <p className="text-[11px] uppercase text-pv-muted">Acquired</p>
-          <p className="font-bold text-pv-ink">{formatMoneyCents(card.acquisitionPrice)}</p>
-        </div>
-        <div className="rounded-lg bg-pv-parchment-soft p-2">
-          <p className="text-[11px] uppercase text-pv-muted">Market</p>
-          <p className="font-bold text-pv-ink">{formatMoneyCents(card.currentPrice)}</p>
-        </div>
-        <div className={`rounded-lg p-2 ${card.pnl >= 0 ? "bg-emerald-100" : "bg-rose-100"}`}>
-          <p className={`text-[11px] uppercase ${card.pnl >= 0 ? "text-emerald-700" : "text-rose-700"}`}>P&amp;L</p>
-          <p className={`font-bold ${card.pnl >= 0 ? "text-emerald-900" : "text-rose-900"}`}>{pnlLabel}</p>
-        </div>
+  return (
+    <article className="flex flex-col rounded-pv-lg border border-pv-line bg-pv-surface-2 p-[14px]">
+      {cardImage}
+
+      <div className="flex items-start justify-between gap-2">
+        <h3 className="truncate text-[14px] font-bold text-pv-text">{card.pokemonCard.name}</h3>
+        <RarityBadge rarity={card.pokemonCard.rarityTier} compact />
+      </div>
+      <p className="text-[12px] text-pv-muted">{card.pokemonCard.setName}</p>
+
+      {/* META ROWS */}
+      <div className="mt-3 space-y-1 text-[13px]">
+        {card.state === "listed" && card.activeListing ? (
+          <>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                Listed at
+              </span>
+              <span className="font-extrabold tabular-nums text-pv-text">
+                {formatMoneyCents(card.activeListing.price)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                Market
+              </span>
+              <span className="text-pv-muted">{formatMoneyCents(card.currentPrice)}</span>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                Market
+              </span>
+              <span
+                className={`font-extrabold tabular-nums ${
+                  card.pokemonCard.rarityTier === "chase" || card.pokemonCard.rarityTier === "ultra_rare"
+                    ? "text-pv-gold"
+                    : "text-pv-text"
+                }`}
+              >
+                {formatMoneyCents(card.currentPrice)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                P&amp;L
+              </span>
+              <span className={`font-bold ${card.pnl >= 0 ? "text-pv-good" : "text-pv-accent"}`}>
+                {pnlLabel}
+              </span>
+            </div>
+          </>
+        )}
       </div>
 
+      {/* STATE CHIP (for non-owned) */}
+      {card.state !== "owned" ? (
+        <div className="mt-3">
+          <Chip tone={card.state === "listed" ? "upcoming" : "info"}>
+            {card.state === "listed" ? "Listed" : "In auction"}
+          </Chip>
+        </div>
+      ) : null}
+
+      {/* PACK VERIFY */}
       {card.packId ? (
-        <div className="flex items-center justify-between rounded-xl bg-sky-50 p-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-sky-800">Provable Fairness</p>
-          <Link href={routes.fairness.verify(card.packId)} className={buttonClassName({ variant: "ghost", size: "sm" })}>
-            Verify pack
+        <div className="mt-3 flex items-center justify-between rounded-pv-sm border border-pv-info/20 bg-[rgba(56,189,248,0.06)] px-2.5 py-1.5">
+          <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-pv-info">
+            Provably fair
+          </span>
+          <Link
+            href={routes.fairness.verify(card.packId)}
+            className="text-[11px] font-bold text-pv-info hover:underline"
+          >
+            Verify →
           </Link>
         </div>
       ) : null}
 
-      {card.state === "owned" ? (
-        <div className="space-y-2">
-          <label htmlFor={`list-price-${card.id}`} className="text-xs font-semibold uppercase tracking-wide text-pv-muted">
-            List Price (USD)
-          </label>
-          <div className="flex items-center gap-2">
-            <input
-              id={`list-price-${card.id}`}
-              type="number"
-              min={0.5}
-              step={0.01}
-              value={priceInput}
-              onChange={(event) => {
-                setPriceInput(event.target.value);
-                if (localError) {
-                  setLocalError(null);
-                }
+      {/* ACTIONS */}
+      <div className="mt-3 flex-1" />
+      <div className="mt-3 space-y-2">
+        {/* OWNED: default dual-button; inline form on click */}
+        {card.state === "owned" && inlineForm === "none" ? (
+          <div className="flex gap-1.5">
+            <Button
+              type="button"
+              variant="primary"
+              size="md"
+              className="flex-1"
+              onClick={() => {
+                setLocalError(null);
+                setInlineForm("list");
               }}
-              className="w-full rounded-xl border border-pv-border px-3 py-2 text-sm font-medium text-pv-ink outline-none ring-0 transition focus:border-pv-accent"
-            />
-            <Button type="button" loading={listingPending} onClick={() => void onSubmitListing()}>
-              {listingPending ? "Listing..." : "List on Marketplace"}
+            >
+              List
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="md"
+              className="flex-1"
+              onClick={() => {
+                setLocalError(null);
+                setInlineForm("auction");
+              }}
+            >
+              Auction
             </Button>
           </div>
+        ) : null}
+
+        {/* OWNED · LIST INLINE FORM */}
+        {card.state === "owned" && inlineForm === "list" ? (
+          <>
+            <div className="flex items-center justify-between">
+              <label
+                htmlFor={`list-price-${card.id}`}
+                className="text-[10px] font-bold uppercase tracking-[0.08em] text-pv-muted-2"
+              >
+                List price (USD)
+              </label>
+              <button
+                type="button"
+                onClick={closeInlineForm}
+                aria-label="Cancel listing form"
+                className="text-[11px] text-pv-muted hover:text-pv-text"
+              >
+                ✕ cancel
+              </button>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <input
+                id={`list-price-${card.id}`}
+                type="number"
+                min={0.5}
+                step={0.01}
+                value={priceInput}
+                onChange={(event) => {
+                  setPriceInput(event.target.value);
+                  if (localError) setLocalError(null);
+                }}
+                className="min-h-10 basis-3/4 rounded-[10px] border border-pv-line bg-pv-surface-3 px-3 py-2 text-[13px] font-semibold text-pv-text outline-none transition focus:border-pv-line-strong focus:ring-[3px] focus:ring-pv-gold/10"
+              />
+              <Button
+                type="button"
+                variant="primary"
+                size="md"
+                className="basis-1/4"
+                loading={listingPending}
+                onClick={() => void onSubmitListing()}
+              >
+                List
+              </Button>
+            </div>
+          </>
+        ) : null}
+
+        {/* OWNED · AUCTION INLINE FORM */}
+        {card.state === "owned" && inlineForm === "auction" ? (
+          <>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-pv-muted-2">
+                Duration
+              </span>
+              <button
+                type="button"
+                onClick={closeInlineForm}
+                aria-label="Cancel auction form"
+                className="text-[11px] text-pv-muted hover:text-pv-text"
+              >
+                ✕ cancel
+              </button>
+            </div>
+            <div
+              role="radiogroup"
+              aria-label="Auction duration"
+              className="inline-flex gap-0.5 rounded-[10px] border border-pv-line bg-pv-surface-3 p-[3px]"
+            >
+              {DURATION_OPTIONS.map((opt) => {
+                const active = opt.value === durationType;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setDurationType(opt.value)}
+                    className={`rounded-[7px] px-3 py-1 text-[11px] font-bold transition-colors ${
+                      active ? "bg-pv-surface-4 text-pv-text" : "text-pv-muted hover:text-pv-text"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+            <label
+              htmlFor={`auction-bid-${card.id}`}
+              className="text-[10px] font-bold uppercase tracking-[0.08em] text-pv-muted-2"
+            >
+              Starting bid (USD)
+            </label>
+            <div className="flex items-center gap-1.5">
+              <input
+                id={`auction-bid-${card.id}`}
+                type="number"
+                min={0.5}
+                step={0.01}
+                value={bidInput}
+                onChange={(event) => {
+                  setBidInput(event.target.value);
+                  if (localError) setLocalError(null);
+                }}
+                className="min-h-10 basis-3/4 rounded-[10px] border border-pv-line bg-pv-surface-3 px-3 py-2 text-[13px] font-semibold text-pv-text outline-none transition focus:border-pv-line-strong focus:ring-[3px] focus:ring-pv-gold/10"
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                size="md"
+                className="basis-1/4"
+                loading={auctionPending}
+                onClick={() => void onSubmitAuction()}
+              >
+                Start
+              </Button>
+            </div>
+          </>
+        ) : null}
+
+        {/* LISTED · cancel listing */}
+        {card.state === "listed" && card.activeListing ? (
           <Button
             type="button"
-            variant="secondary"
+            variant="danger"
+            size="md"
             fullWidth
-            loading={auctionPending}
-            onClick={(event) => {
-              setAuctionTriggerElement(event.currentTarget);
-              setAuctionSubmitError(null);
-              setAuctionDialogOpen(true);
-            }}
+            loading={cancelPending}
+            onClick={() => void onCancelListing(card.activeListing!.id)}
           >
-            {auctionPending ? "Starting..." : "Start Auction"}
+            {cancelPending ? "Cancelling…" : "Cancel listing"}
           </Button>
-          {localError ? <p className="text-xs font-semibold text-rose-700">{localError}</p> : null}
-        </div>
-      ) : null}
+        ) : null}
 
-      {card.state === "listed" && card.activeListing ? (
-        <div className="rounded-xl bg-amber-50 p-3">
-          <p className="text-xs uppercase text-amber-700">Active Listing</p>
-          <p className="text-sm font-bold text-amber-900">{formatMoneyCents(card.activeListing.price)}</p>
-        </div>
-      ) : null}
-    </div>
-  );
+        {/* IN_AUCTION · no actions (auction is running) */}
+        {card.state === "in_auction" ? (
+          <Button type="button" variant="secondary" size="md" fullWidth disabled>
+            In auction
+          </Button>
+        ) : null}
 
-  const actions =
-    card.state === "listed" && card.activeListing ? (
-      <Button
-        type="button"
-        variant="danger"
-        fullWidth
-        loading={cancelPending}
-        onClick={() => void onCancelListing(card.activeListing!.id)}
-      >
-        {cancelPending ? "Cancelling..." : "Cancel Listing"}
-      </Button>
-    ) : undefined;
-
-  return (
-    <>
-      <CardShell header={header} media={media} body={body} actions={actions} variant="surface" className="min-h-[620px]" />
-
-      {card.state === "owned" ? (
-        <StartAuctionDialog
-          open={auctionDialogOpen}
-          card={card}
-          pending={auctionPending}
-          submitError={auctionSubmitError}
-          triggerElement={auctionTriggerElement}
-          onClose={() => {
-            setAuctionDialogOpen(false);
-            setAuctionSubmitError(null);
-          }}
-          onSubmit={onSubmitAuction}
-        />
-      ) : null}
-    </>
+        {localError ? (
+          <p role="alert" className="text-[11px] font-semibold text-pv-accent">
+            {localError}
+          </p>
+        ) : null}
+      </div>
+    </article>
   );
 }
