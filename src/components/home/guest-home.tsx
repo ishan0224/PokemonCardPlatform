@@ -27,7 +27,7 @@ export async function GuestHome(): Promise<JSX.Element> {
     <div className="space-y-8">
       <section className="relative aspect-[21/9] overflow-hidden rounded-3xl border border-pv-border bg-pv-ink text-white">
         <Image
-          src="/images/home-guest-hero.png"
+          src="/images/home-guest-hero.jpg"
           alt="PullVault hero artwork"
           fill
           priority
