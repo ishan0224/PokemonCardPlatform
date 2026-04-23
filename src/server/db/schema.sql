@@ -384,7 +384,7 @@ CREATE TABLE IF NOT EXISTS auctions (
     current_bidder_id   UUID REFERENCES users(id),
     ends_at             TIMESTAMPTZ NOT NULL,
     original_end_time   TIMESTAMPTZ NOT NULL,
-    duration_type       VARCHAR(10) NOT NULL CHECK (duration_type IN ('1h', '6h', '24h')),
+    duration_type       VARCHAR(10) NOT NULL CHECK (duration_type IN ('1h', '6h', '24h', 'custom')),
     status              VARCHAR(20) NOT NULL DEFAULT 'active'
                         CHECK (status IN ('active', 'completed', 'cancelled')),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
