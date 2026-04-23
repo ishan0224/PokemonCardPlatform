@@ -44,7 +44,7 @@ export function SidebarNav({ mobile = false }: SidebarNavProps): JSX.Element {
             aria-label="PullVault home"
             className="inline-flex items-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pv-gold rounded-pv-sm"
           >
-            <Logo height={72} priority />
+            <Logo height={108} priority />
           </Link>
         </div>
       ) : null}
