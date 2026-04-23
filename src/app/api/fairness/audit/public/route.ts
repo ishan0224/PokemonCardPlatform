@@ -1,3 +1,6 @@
+// Uses request.headers (getClientIp) — must be dynamic
+export const dynamic = "force-dynamic";
+
 import { type NextRequest, NextResponse } from "next/server";
 import {
   PUBLIC_FAIRNESS_AUDIT_CACHE_TTL_SECONDS,

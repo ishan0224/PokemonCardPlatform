@@ -1,5 +1,5 @@
-// Public, user-agnostic listing — safe to cache; socket events cover real-time freshness
-export const revalidate = 30;
+// Uses nextUrl.searchParams — must be dynamic
+export const dynamic = "force-dynamic";
 
 import { type NextRequest, NextResponse } from "next/server";
 import { handleRouteError } from "@/server/http/api";
