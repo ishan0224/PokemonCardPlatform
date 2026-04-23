@@ -237,8 +237,8 @@ export default function CollectionDetailPage({ params }: CollectionDetailPagePro
         <Chip tone={mapStateTone(card.state)}>{mapStateLabel(card.state)}</Chip>
       </header>
 
-      <section className="grid grid-cols-1 gap-5 lg:grid-cols-[240px_1fr]">
-        <div className="rounded-pv-lg border border-pv-line bg-pv-surface-2 p-4">
+      <section className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[272px_1fr]">
+        <div className="flex justify-center rounded-pv-lg border border-pv-line bg-pv-surface-2 p-4 lg:self-start">
           <CardImage
             src={card.pokemonCard.imageUrl}
             hiresSrc={card.pokemonCard.imageUrlHires}

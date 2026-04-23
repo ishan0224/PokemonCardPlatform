@@ -36,8 +36,10 @@ export function isActiveNavPath(currentPath: string, href: string): boolean {
   const normalizedCurrentPath = normalizePathname(currentPath);
   const normalizedHref = normalizePathname(href);
 
-  if (normalizedHref === routes.home) {
-    return normalizedCurrentPath === routes.home;
+  // Exact-match only for index routes (home and admin home) to prevent
+  // child routes from also highlighting the parent nav item
+  if (normalizedHref === routes.home || normalizedHref === routes.admin.index) {
+    return normalizedCurrentPath === normalizedHref;
   }
 
   return normalizedCurrentPath === normalizedHref || normalizedCurrentPath.startsWith(`${normalizedHref}/`);

@@ -39,7 +39,7 @@ export default function LoginPage(): JSX.Element {
         password
       });
       await refreshAuth();
-      router.push(routes.drops.index);
+      router.push(routes.home);
     } catch (err) {
       setError(mapApiErrorToMessage(err));
     } finally {

@@ -81,7 +81,7 @@ const config: Config = {
         "pv-pulse": {
           "0%, 100%": { opacity: "1" },
           "50%": { opacity: "0.45" }
-        }
+        },
       },
       animation: {
         "pv-pulse": "pv-pulse 1.6s ease-in-out infinite"

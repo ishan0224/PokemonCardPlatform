@@ -1,8 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { getNavSections } from "@/components/ui/nav-items";
+import { Logo } from "@/components/ui/logo";
+import { Button } from "@/components/ui/button";
+import { apiClient } from "@/lib/api-client";
 import { routes } from "@/lib/routes";
 import { isActiveNavPath, toPathname } from "@/components/ui/nav-active";
 import { SidebarNavActiveSync } from "@/components/ui/sidebar-nav-active-sync";
@@ -15,31 +18,41 @@ type SidebarNavProps = {
 
 export function SidebarNav({ mobile = false }: SidebarNavProps): JSX.Element {
   const pathname = usePathname();
+  const router = useRouter();
   const currentPath = toPathname(pathname ?? "/");
-  const { user } = useAuth();
+  const { user, clearAuth } = useAuth();
   const sections = getNavSections(user?.role ?? null);
+
+  const onMobileLogout = async (): Promise<void> => {
+    try {
+      await apiClient.logout();
+    } finally {
+      clearAuth();
+      router.push(routes.auth.login);
+    }
+  };
 
   return (
     <aside
       className="flex h-full flex-col gap-6 px-3 py-5 text-pv-text"
       aria-label={mobile ? "Mobile navigation" : "Sidebar navigation"}
     >
-      <div className="px-2 py-1">
-        <Link
-          href={routes.home}
-          className="inline-flex items-center gap-2.5 text-[18px] font-black tracking-tight text-pv-text"
-        >
-          <span className="grid h-7 w-7 place-items-center rounded-pv-sm bg-gradient-to-br from-white to-pv-gold text-[14px] font-black text-pv-surface">
-            PV
-          </span>
-          PullVault
-        </Link>
-      </div>
+      {!mobile ? (
+        <div className="flex justify-center py-1">
+          <Link
+            href={routes.home}
+            aria-label="PullVault home"
+            className="inline-flex items-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pv-gold rounded-pv-sm"
+          >
+            <Logo height={72} priority />
+          </Link>
+        </div>
+      ) : null}
 
-      <nav className="flex-1 space-y-6" aria-label="Primary">
+      <nav className="min-h-0 flex-1 space-y-6 overflow-y-auto" aria-label="Primary">
         {sections.map((section) => (
           <section key={section.id} aria-label={section.label} className="space-y-0.5">
-            <p className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-pv-muted-2">
+            <p className="px-3 pb-1.5 text-[11px] font-extrabold uppercase tracking-[0.18em] text-pv-gold">
               {section.label}
             </p>
             <ul className="space-y-0.5">
@@ -72,7 +85,15 @@ export function SidebarNav({ mobile = false }: SidebarNavProps): JSX.Element {
       </nav>
 
       <div className="mt-auto">
-        <SidebarAccountMenu />
+        {mobile ? (
+          user ? (
+            <Button variant="danger" size="md" fullWidth onClick={() => void onMobileLogout()}>
+              Logout
+            </Button>
+          ) : null
+        ) : (
+          <SidebarAccountMenu />
+        )}
       </div>
       <SidebarNavActiveSync />
     </aside>
