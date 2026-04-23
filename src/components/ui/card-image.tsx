@@ -88,6 +88,28 @@ function resolveGlowClassName(rarityTier?: RarityTier): string {
   }
 }
 
+// Local static assets under /public/images/*.png have pre-converted AVIF/WebP
+// siblings (see scripts/bulk image conversion). For these paths we short-circuit
+// next/image and emit <picture> so the browser negotiates AVIF → WebP → PNG
+// directly, bypassing the on-demand /_next/image Sharp pipeline entirely.
+function resolveLocalPictureSources(imageSrc: string): { avif: string; webp: string; fallback: string } | null {
+  if (!imageSrc.startsWith("/images/")) {
+    return null;
+  }
+
+  const extensionMatch = imageSrc.match(/\.(png|jpg|jpeg)$/i);
+  if (!extensionMatch) {
+    return null;
+  }
+
+  const stem = imageSrc.slice(0, imageSrc.length - extensionMatch[0].length);
+  return {
+    avif: `${stem}.avif`,
+    webp: `${stem}.webp`,
+    fallback: imageSrc
+  };
+}
+
 export function CardImage({
   src,
   alt,
@@ -103,6 +125,9 @@ export function CardImage({
   const imageSrc = hiresSrc ?? src ?? "/images/card-back.png";
   const [loaded, setLoaded] = useState(false);
   const blurDataURL = rarityTier ? rarityBlurMap[rarityTier] : undefined;
+  const localSources = resolveLocalPictureSources(imageSrc);
+  const objectFitClass = frame === "pack" ? "object-contain" : "object-cover";
+  const inlineStyle = zoom !== 1 ? { transform: `scale(${zoom})`, transformOrigin: "center" as const } : undefined;
 
   useEffect(() => {
     setLoaded(false);
@@ -120,19 +145,38 @@ export function CardImage({
       {!loaded ? (
         <div className={cx("absolute inset-0 animate-pulse", frame === "pack" ? "bg-transparent" : "bg-pv-parchment-soft")} aria-hidden="true" />
       ) : null}
-      <Image
-        src={imageSrc}
-        alt={alt}
-        width={config.width}
-        height={config.height}
-        priority={priority}
-        sizes={config.sizes}
-        placeholder={blurDataURL ? "blur" : undefined}
-        blurDataURL={blurDataURL}
-        className={`relative h-full w-full ${frame === "pack" ? "object-contain" : "object-cover"}`}
-        style={zoom !== 1 ? { transform: `scale(${zoom})`, transformOrigin: "center" } : undefined}
-        onLoad={() => setLoaded(true)}
-      />
+      {localSources ? (
+        <picture>
+          <source srcSet={localSources.avif} type="image/avif" />
+          <source srcSet={localSources.webp} type="image/webp" />
+          <img
+            src={localSources.fallback}
+            alt={alt}
+            width={config.width}
+            height={config.height}
+            loading={priority ? "eager" : "lazy"}
+            fetchPriority={priority ? "high" : "auto"}
+            decoding="async"
+            className={`relative h-full w-full ${objectFitClass}`}
+            style={inlineStyle}
+            onLoad={() => setLoaded(true)}
+          />
+        </picture>
+      ) : (
+        <Image
+          src={imageSrc}
+          alt={alt}
+          width={config.width}
+          height={config.height}
+          priority={priority}
+          sizes={config.sizes}
+          placeholder={blurDataURL ? "blur" : undefined}
+          blurDataURL={blurDataURL}
+          className={`relative h-full w-full ${objectFitClass}`}
+          style={inlineStyle}
+          onLoad={() => setLoaded(true)}
+        />
+      )}
       <span className={cx("pointer-events-none absolute inset-0 rounded-xl", resolveGlowClassName(rarityTier))} aria-hidden="true" />
     </div>
   );

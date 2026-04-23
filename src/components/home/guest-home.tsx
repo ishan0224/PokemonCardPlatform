@@ -1,4 +1,3 @@
-import Image from "next/image";
 import Link from "next/link";
 import { unstable_cache } from "next/cache";
 import { GuestMarketplaceGrid } from "@/components/home/guest-marketplace-grid";
@@ -26,14 +25,18 @@ export async function GuestHome(): Promise<JSX.Element> {
   return (
     <div className="space-y-8">
       <section className="relative aspect-[21/9] overflow-hidden rounded-3xl border border-pv-border bg-pv-ink text-white">
-        <Image
-          src="/images/home-guest-hero.jpg"
-          alt="PullVault hero artwork"
-          fill
-          priority
-          sizes="(min-width: 1024px) 1200px, 100vw"
-          className="object-cover"
-        />
+        <picture>
+          <source srcSet="/images/home-guest-hero.avif" type="image/avif" />
+          <source srcSet="/images/home-guest-hero.webp" type="image/webp" />
+          <img
+            src="/images/home-guest-hero.jpg"
+            alt="PullVault hero artwork"
+            loading="eager"
+            decoding="async"
+            fetchPriority="high"
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+        </picture>
         <div className="relative p-6 sm:p-8 lg:p-10">
           <p className="inline-flex rounded-full bg-white/20 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em]">
             Live card drops

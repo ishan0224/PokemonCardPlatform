@@ -16,6 +16,7 @@ export function SidebarAccountMenu(): JSX.Element {
     await apiClient.logout();
     clearAuth();
     router.push(routes.auth.login);
+    router.refresh();
   };
 
   if (loading) {

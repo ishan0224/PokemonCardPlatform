@@ -29,6 +29,7 @@ export function SidebarNav({ mobile = false }: SidebarNavProps): JSX.Element {
     } finally {
       clearAuth();
       router.push(routes.auth.login);
+      router.refresh();
     }
   };
 
