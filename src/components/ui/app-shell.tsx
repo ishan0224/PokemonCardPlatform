@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { MobileBottomNav } from "@/components/ui/mobile-bottom-nav";
+import { Logo } from "@/components/ui/logo";
+import { MobileAccountBadge } from "@/components/ui/mobile-account-badge";
 import { MobileNavDrawer } from "@/components/ui/mobile-nav-drawer";
 import { SiteFooter } from "@/components/ui/site-footer";
 import { SiteFooterVisibility } from "@/components/ui/site-footer-visibility";
@@ -19,22 +20,26 @@ export async function AppShell({ children }: { children: ReactNode }): Promise<J
         </aside>
 
         <div className="flex min-h-screen min-w-0 flex-1 flex-col">
-          <header className="sticky top-0 z-30 flex min-h-16 items-center justify-between border-b border-pv-line bg-pv-surface/80 px-4 backdrop-blur-md md:hidden">
-            <Link
-              href={routes.home}
-              className="flex items-center gap-2 text-lg font-black tracking-tight text-pv-text"
-            >
-              <span className="grid h-7 w-7 place-items-center rounded-pv-sm bg-gradient-to-br from-white to-pv-gold text-[14px] font-black text-pv-surface">
-                PV
-              </span>
-              PullVault
-            </Link>
-            <MobileNavDrawer>
-              <SidebarNav mobile />
-            </MobileNavDrawer>
+          <header className="sticky top-0 z-[80] flex min-h-16 items-center justify-between gap-2 border-b border-pv-line bg-pv-surface px-3 md:hidden">
+            <div className="flex items-center gap-2">
+              <MobileNavDrawer>
+                <SidebarNav mobile />
+              </MobileNavDrawer>
+              <Link
+                href={routes.home}
+                aria-label="PullVault home"
+                className="inline-flex items-center gap-2 rounded-pv-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pv-gold"
+              >
+                <Logo height={44} />
+                <span className="text-[15px] font-black tracking-tight text-pv-text">
+                  PullVault
+                </span>
+              </Link>
+            </div>
+            <MobileAccountBadge />
           </header>
 
-          <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 pb-24 sm:px-6 md:pb-6 lg:px-7">
+          <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 sm:px-6 md:pb-6 lg:px-7">
             {children}
           </main>
           <SiteFooterVisibility>
@@ -42,7 +47,6 @@ export async function AppShell({ children }: { children: ReactNode }): Promise<J
           </SiteFooterVisibility>
         </div>
       </div>
-      <MobileBottomNav />
     </div>
   );
 }

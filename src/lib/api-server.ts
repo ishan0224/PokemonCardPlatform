@@ -6,6 +6,8 @@ import type {
   AuctionDetail,
   CollectionCard,
   Drop,
+  MarketplaceListing,
+  MarketplaceSort,
   PackSummary
 } from "@/lib/api-client";
 import { getAuctionDetail, listActiveAuctions } from "@/server/services/auction.service";
@@ -13,7 +15,8 @@ import { getUserBalance } from "@/server/services/balance.service";
 import { getCollectionPortfolio, listCollectionCards } from "@/server/services/collection.service";
 import { listDrops as listDropsService, listPublicDropsByStatus } from "@/server/services/drop.service";
 import { listUserPacks } from "@/server/services/pack.service";
-import type { DropStatus } from "@/lib/types";
+import { browseListings } from "@/server/services/trade.service";
+import type { DropStatus, RarityTier } from "@/lib/types";
 
 export const serverApiClient = {
   async listDrops(limit: number): Promise<{ drops: Drop[] }> {
@@ -83,5 +86,26 @@ export const serverApiClient = {
   async getCollectionPortfolioSummary(userId: string): Promise<{ totalValueCents: number; cardCount: number }> {
     const portfolio = await getCollectionPortfolio(userId);
     return { totalValueCents: portfolio.totalMarketValue, cardCount: portfolio.totalCards };
+  },
+
+  async listMarketplaceListings(input: {
+    rarity?: RarityTier | null;
+    sort?: MarketplaceSort;
+    page?: number;
+    limit?: number;
+  }): Promise<{ listings: MarketplaceListing[]; page: number; limit: number; total: number }> {
+    const result = await browseListings({
+      rarity: input.rarity ?? null,
+      sort: input.sort ?? "newest",
+      page: input.page ?? 1,
+      limit: input.limit ?? 12
+    });
+
+    return {
+      listings: result.listings as MarketplaceListing[],
+      page: result.page,
+      limit: result.limit,
+      total: result.total
+    };
   }
 };

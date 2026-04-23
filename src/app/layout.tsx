@@ -12,7 +12,12 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: "PullVault | Live Collectible Drops",
-  description: "Buy, open, and reveal collectible card packs in real time."
+  description: "Buy, open, and reveal collectible card packs in real time.",
+  icons: {
+    icon: "/images/Logo.png",
+    shortcut: "/images/Logo.png",
+    apple: "/images/Logo.png"
+  }
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }): Promise<JSX.Element> {

@@ -1,11 +1,51 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Button } from "@/components/ui/button";
+import { createPortal } from "react-dom";
+import { usePathname } from "next/navigation";
 
 type MobileNavDrawerProps = {
   children: ReactNode;
 };
+
+function HamburgerIcon(): JSX.Element {
+  return (
+    <svg
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <line x1="3" y1="6" x2="21" y2="6" />
+      <line x1="3" y1="12" x2="21" y2="12" />
+      <line x1="3" y1="18" x2="21" y2="18" />
+    </svg>
+  );
+}
+
+function CloseIcon(): JSX.Element {
+  return (
+    <svg
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
 
 function getFocusableElements(container: HTMLElement): HTMLElement[] {
   const selector = [
@@ -23,7 +63,17 @@ function getFocusableElements(container: HTMLElement): HTMLElement[] {
 export function MobileNavDrawer({ children }: MobileNavDrawerProps): JSX.Element {
   const [open, setOpen] = useState(false);
   const [reduceMotion, setReduceMotion] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const pathname = usePathname();
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    setOpen(false);
+  }, [pathname]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -111,43 +161,50 @@ export function MobileNavDrawer({ children }: MobileNavDrawerProps): JSX.Element
     }
 
     if (!open) {
-      return `pointer-events-none translate-x-full opacity-0 ${transition}`;
+      return `pointer-events-none -translate-x-full opacity-0 ${transition}`;
     }
 
     return `translate-x-0 opacity-100 ${transition}`;
   }, [open, reduceMotion]);
 
+  const drawerPortal =
+    mounted && open
+      ? createPortal(
+          <>
+            <div
+              className="fixed inset-x-0 bottom-0 top-16 z-[60] bg-black/60"
+              aria-hidden="true"
+              onClick={() => setOpen(false)}
+            />
+
+            <div
+              id="mobile-nav-drawer"
+              ref={panelRef}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Navigation menu"
+              className={`fixed left-0 top-16 z-[70] h-[calc(100vh-4rem)] w-full border-r border-pv-line bg-pv-surface shadow-2xl transition-all ${drawerClasses}`}
+            >
+              <div className="h-full overflow-y-auto">{children}</div>
+            </div>
+          </>,
+          document.body
+        )
+      : null;
+
   return (
     <>
-      <Button variant="secondary" size="sm" onClick={() => setOpen(true)} aria-expanded={open} aria-controls="mobile-nav-drawer">
-        Menu
-      </Button>
-
-      {open ? (
-        <>
-          <div
-            className="fixed inset-0 z-50 bg-pv-ink/40 transition-opacity opacity-100"
-            aria-hidden="true"
-            onClick={() => setOpen(false)}
-          />
-
-          <div
-            id="mobile-nav-drawer"
-            ref={panelRef}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Navigation menu"
-            className={`fixed right-0 top-0 z-50 h-full w-[min(90vw,22rem)] border-l border-pv-border bg-pv-parchment shadow-2xl transition-all ${drawerClasses}`}
-          >
-            <div className="flex items-center justify-end border-b border-pv-border p-3">
-              <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
-                Close
-              </Button>
-            </div>
-            <div className="h-[calc(100%-4.5rem)] overflow-y-auto">{children}</div>
-          </div>
-        </>
-      ) : null}
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        aria-expanded={open}
+        aria-controls="mobile-nav-drawer"
+        aria-label={open ? "Close navigation menu" : "Open navigation menu"}
+        className="inline-flex h-11 w-11 items-center justify-center rounded-pv-sm text-pv-text transition hover:bg-pv-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pv-gold"
+      >
+        {open ? <CloseIcon /> : <HamburgerIcon />}
+      </button>
+      {drawerPortal}
     </>
   );
 }

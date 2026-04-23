@@ -46,7 +46,7 @@ export default function RegisterPage(): JSX.Element {
         setNotice("Registration succeeded. Confirm your email, then sign in.");
       } else {
         await refreshAuth();
-        router.push(routes.drops.index);
+        router.push(routes.home);
       }
     } catch (err) {
       setError(mapApiErrorToMessage(err));
