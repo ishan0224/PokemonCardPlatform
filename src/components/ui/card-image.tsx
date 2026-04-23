@@ -1,5 +1,9 @@
+"use client";
+
 import Image from "next/image";
+import { useEffect, useState } from "react";
 import type { RarityTier } from "@/lib/types";
+import { rarityBlurMap } from "./card-image-blurs";
 
 export type CardImageSize = "sm" | "md" | "lg" | "xl";
 
@@ -96,7 +100,13 @@ export function CardImage({
   className
 }: CardImageProps): JSX.Element {
   const config = frame === "pack" ? packSizeConfig[size] : sizeConfig[size];
-  const imageSrc = hiresSrc ?? src ?? "/card-back.svg";
+  const imageSrc = hiresSrc ?? src ?? "/images/card-back.png";
+  const [loaded, setLoaded] = useState(false);
+  const blurDataURL = rarityTier ? rarityBlurMap[rarityTier] : undefined;
+
+  useEffect(() => {
+    setLoaded(false);
+  }, [imageSrc]);
 
   return (
     <div
@@ -107,7 +117,9 @@ export function CardImage({
       )}
       style={{ width: config.width, height: config.height }}
     >
-      <div className={cx("absolute inset-0 animate-pulse", frame === "pack" ? "bg-transparent" : "bg-pv-parchment-soft")} aria-hidden="true" />
+      {!loaded ? (
+        <div className={cx("absolute inset-0 animate-pulse", frame === "pack" ? "bg-transparent" : "bg-pv-parchment-soft")} aria-hidden="true" />
+      ) : null}
       <Image
         src={imageSrc}
         alt={alt}
@@ -115,8 +127,11 @@ export function CardImage({
         height={config.height}
         priority={priority}
         sizes={config.sizes}
+        placeholder={blurDataURL ? "blur" : undefined}
+        blurDataURL={blurDataURL}
         className={`relative h-full w-full ${frame === "pack" ? "object-contain" : "object-cover"}`}
         style={zoom !== 1 ? { transform: `scale(${zoom})`, transformOrigin: "center" } : undefined}
+        onLoad={() => setLoaded(true)}
       />
       <span className={cx("pointer-events-none absolute inset-0 rounded-xl", resolveGlowClassName(rarityTier))} aria-hidden="true" />
     </div>

@@ -98,20 +98,19 @@ export default function AdminEconomicsPage(): JSX.Element {
     async (range: { fromIso: string; toIso: string }, signal?: AbortSignal): Promise<void> => {
       setState((prev) => ({ ...prev, loading: true, error: null, forbidden: false }));
       try {
-        const [summaryResult, packResult, fairnessLatestResult, fairnessNightlyResult] = await Promise.all([
+        const [summaryResult, packResult, fairnessLatestResult] = await Promise.all([
           apiClient.getEconomicsSummary(range, signal),
           apiClient.getPackEconomics(range, signal),
-          loadFairnessAudit("latest", signal),
-          loadFairnessAudit("nightly", signal)
+          loadFairnessAudit("latest", signal)
         ]);
         setLastPersistedMetricsDelta(false);
         setState({
           summary: summaryResult.summary,
           bundle: packResult.bundle,
           fairnessLatestAudit: fairnessLatestResult.audit,
-          fairnessNightlyAudit: fairnessNightlyResult.audit,
+          fairnessNightlyAudit: null,
           fairnessOnDemandPreview: null,
-          fairnessWarning: fairnessLatestResult.warning ?? fairnessNightlyResult.warning,
+          fairnessWarning: fairnessLatestResult.warning,
           loading: false,
           error: null,
           forbidden: false
@@ -137,6 +136,23 @@ export default function AdminEconomicsPage(): JSX.Element {
     },
     [loadFairnessAudit]
   );
+
+  // Deferred nightly audit: only fetch after first paint if latest audit is null
+  useEffect(() => {
+    if (state.fairnessLatestAudit !== null || state.loading || !state.summary) return;
+    let cancelled = false;
+    loadFairnessAudit("nightly").then((result) => {
+      if (cancelled) return;
+      setState((prev) => ({
+        ...prev,
+        fairnessNightlyAudit: result.audit,
+        fairnessWarning: prev.fairnessWarning ?? result.warning
+      }));
+    }).catch(() => {
+      // Non-critical; nightly audit failure doesn't block the page
+    });
+    return () => { cancelled = true; };
+  }, [state.fairnessLatestAudit, state.loading, state.summary, loadFairnessAudit]);
 
   useEffect(() => {
     if (!user) {

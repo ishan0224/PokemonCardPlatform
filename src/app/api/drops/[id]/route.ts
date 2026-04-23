@@ -1,4 +1,5 @@
-export const dynamic = "force-dynamic";
+// Public drop detail — no auth, safe to cache
+export const revalidate = 30;
 
 import { NextResponse } from "next/server";
 import { handleRouteError, requireUuid } from "@/server/http/api";

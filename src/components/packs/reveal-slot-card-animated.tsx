@@ -1,7 +1,6 @@
 "use client";
 
-import dynamic from "next/dynamic";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { CardImage } from "@/components/ui/card-image";
@@ -12,24 +11,11 @@ import type { PackCard } from "@/lib/api-client";
 import type { RarityTier } from "@/lib/types";
 import { formatMoneyCents } from "@/lib/format";
 
-const ScratchOverlay = dynamic(
-  () => import("./scratch-overlay").then((module) => module.ScratchOverlay),
-  {
-    ssr: false
-  }
-);
-
 type RevealSlotCardAnimatedProps = {
   slotNumber: number;
   card?: PackCard;
   pending?: boolean;
   onReveal?: () => Promise<void>;
-};
-
-type RevealMode = "touch" | "auto" | "tap";
-
-type NavigatorWithMemory = Navigator & {
-  deviceMemory?: number;
 };
 
 function shouldShowBurst(card: PackCard | undefined): boolean {
@@ -40,28 +26,6 @@ function shouldShowBurst(card: PackCard | undefined): boolean {
   return card.rarityTier === "ultra_rare" || card.rarityTier === "chase";
 }
 
-function getRevealMode(reducedMotion: boolean): RevealMode {
-  if (typeof window === "undefined") {
-    return "tap";
-  }
-
-  if (reducedMotion) {
-    return "tap";
-  }
-
-  const navigatorWithMemory = window.navigator as NavigatorWithMemory;
-  const deviceMemory = navigatorWithMemory.deviceMemory ?? 8;
-  if (deviceMemory < 4) {
-    return "tap";
-  }
-
-  if (window.navigator.maxTouchPoints > 0) {
-    return "touch";
-  }
-
-  return "auto";
-}
-
 export function RevealSlotCardAnimated({
   slotNumber,
   card,
@@ -69,8 +33,6 @@ export function RevealSlotCardAnimated({
   onReveal
 }: RevealSlotCardAnimatedProps): JSX.Element {
   const reducedMotion = useReducedMotion();
-  const revealMode = useMemo<RevealMode>(() => getRevealMode(Boolean(reducedMotion)), [reducedMotion]);
-  const [scratchProgress, setScratchProgress] = useState(0);
   const [optimisticRevealStarted, setOptimisticRevealStarted] = useState(false);
   const [localPending, setLocalPending] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -83,7 +45,6 @@ export function RevealSlotCardAnimated({
 
   useEffect(() => {
     if (isRevealed) {
-      setScratchProgress(100);
       setOptimisticRevealStarted(true);
       revealAttemptedRef.current = true;
 
@@ -103,7 +64,6 @@ export function RevealSlotCardAnimated({
 
     setShowBurst(false);
     setOptimisticRevealStarted(false);
-    setScratchProgress(0);
     setLocalPending(false);
     setLocalError(null);
     revealAttemptedRef.current = false;
@@ -132,16 +92,10 @@ export function RevealSlotCardAnimated({
     } catch (_error) {
       revealAttemptedRef.current = false;
       setOptimisticRevealStarted(false);
-      setScratchProgress(0);
       setLocalError("Reveal failed. Please try again.");
     } finally {
       setLocalPending(false);
     }
-  };
-
-  const onScratchComplete = (): void => {
-    setScratchProgress(100);
-    void executeReveal();
   };
 
   const header = (
@@ -174,14 +128,7 @@ export function RevealSlotCardAnimated({
           transition={{ duration: reducedMotion ? 0.2 : 0.4, ease: "easeInOut" }}
         >
           <div className="absolute inset-0 [backface-visibility:hidden]">
-            <CardImage src="/card-back.svg" alt={`Face-down card slot ${slotNumber}`} size="md" />
-            {!reducedMotion ? (
-              <motion.div
-                className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-r from-transparent via-white/20 to-transparent"
-                animate={{ x: [-170, 170] }}
-                transition={{ repeat: Infinity, duration: 1.6, ease: "linear" }}
-              />
-            ) : null}
+            <CardImage src="/images/card-back.png" alt={`Face-down card slot ${slotNumber}`} size="md" className="border-0 bg-transparent" />
           </div>
 
           <div className="absolute inset-0 [backface-visibility:hidden]" style={{ transform: "rotateY(180deg)" }}>
@@ -198,16 +145,6 @@ export function RevealSlotCardAnimated({
             )}
           </div>
         </motion.div>
-
-        {!isRevealed && revealMode !== "tap" && !reducedMotion ? (
-          <ScratchOverlay
-            progress={scratchProgress}
-            disabled={pending || localPending}
-            mode={revealMode === "touch" ? "touch" : "auto"}
-            onProgressChange={setScratchProgress}
-            onComplete={onScratchComplete}
-          />
-        ) : null}
 
         <AnimatePresence>
           {showBurst && !reducedMotion ? (
@@ -261,20 +198,9 @@ export function RevealSlotCardAnimated({
           </span>
         </div>
       </div>
-    ) : (
-      <div className="space-y-2 rounded-pv-sm border border-dashed border-pv-line bg-pv-surface-3 p-3 text-center text-[12px] font-semibold text-pv-muted">
-        <p>
-          {revealMode === "touch" && !reducedMotion
-            ? "Scratch the card to reveal"
-            : revealMode === "auto" && !reducedMotion
-              ? "Tap card to auto-scratch"
-              : "Tap to scratch"}
-        </p>
-        {localError ? (
-          <p className="text-[11px] font-semibold text-pv-accent">! {localError}</p>
-        ) : null}
-      </div>
-    );
+    ) : localError ? (
+      <p className="text-[11px] font-semibold text-pv-accent text-center">! {localError}</p>
+    ) : null;
 
   const actions =
     !isRevealed && onReveal ? (
@@ -283,13 +209,10 @@ export function RevealSlotCardAnimated({
         variant="gold"
         fullWidth
         loading={pending || localPending}
-        onClick={() => {
-          setScratchProgress(100);
-          void executeReveal();
-        }}
+        onClick={() => void executeReveal()}
         aria-label={`Reveal slot ${slotNumber}`}
       >
-        {pending || localPending ? "Revealing…" : "Scratch to reveal"}
+        {pending || localPending ? "Revealing…" : "Tap or click to reveal"}
       </Button>
     ) : undefined;
 

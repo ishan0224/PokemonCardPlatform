@@ -9,6 +9,7 @@ import type { Drop } from "@/lib/api-client";
 import { dropPackImageDimensions, dropPackImagePath } from "@/lib/drop-pack-image";
 import { formatMoneyCents, formatTierLabel } from "@/lib/format";
 import { routes } from "@/lib/routes";
+import { usePrefetchOnHover } from "@/hooks/use-prefetch-on-hover";
 
 type DropCompositeCardProps = {
   drop: Drop;
@@ -74,12 +75,14 @@ export function DropCompositeCard({
   const readableTiers = drop.tiers.map((tier) => formatTierLabel(tier.tier)).join(", ");
   const inventory = inventorySummary(drop);
   const { label, variant } = resolveAction(drop.status, inventory.soldOut);
+  const { onMouseEnter } = usePrefetchOnHover(routes.drops.detail(drop.id));
 
   return (
     <Link
       href={routes.drops.detail(drop.id)}
       aria-label={`Open drop ${drop.id.slice(0, 8)} details — ${readableTiers}`}
       className="block h-full transition hover:-translate-y-0.5"
+      onMouseEnter={onMouseEnter}
     >
       <article className="flex h-full flex-col overflow-hidden rounded-pv-lg border border-pv-line bg-pv-surface-2 transition-colors hover:border-pv-line-strong">
         {/* MEDIA */}

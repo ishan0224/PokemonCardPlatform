@@ -176,6 +176,7 @@ async function NextDropHero(): Promise<JSX.Element> {
           height={imageDims.height}
           className="h-auto w-full object-contain drop-shadow-[0_30px_60px_rgba(0,0,0,0.55)]"
           aria-hidden="true"
+          priority
         />
       }
     >
@@ -328,8 +329,11 @@ function CollectionHighlightCard({ card }: { card: CollectionCard }): JSX.Elemen
       href={routes.collection.index}
       className="group flex flex-col gap-2.5 rounded-pv-lg border border-pv-line bg-pv-surface-2 p-3.5 transition hover:-translate-y-0.5 hover:border-pv-line-strong"
     >
-      {/* Real card art from the user's collection, with rarity glow + absolute rarity badge. */}
-      <div className="relative flex items-center justify-center">
+      {/* Rarity badge above the card art so it never overlaps */}
+      <div className="flex flex-col items-center gap-1.5">
+        <div className="self-start">
+          <RarityBadge rarity={rarity} compact />
+        </div>
         <CardImage
           src={card.pokemonCard.imageUrl}
           hiresSrc={card.pokemonCard.imageUrlHires}
@@ -337,9 +341,6 @@ function CollectionHighlightCard({ card }: { card: CollectionCard }): JSX.Elemen
           size="md"
           rarityTier={rarity}
         />
-        <span className="absolute left-2 top-2">
-          <RarityBadge rarity={rarity} compact />
-        </span>
       </div>
 
       <div>
@@ -386,13 +387,8 @@ async function resolveActiveBidCount(userId: string): Promise<number> {
 async function resolvePortfolio(
   userId: string
 ): Promise<{ value: number; cardCount: number }> {
-  const { cards, total } = await serverApiClient.listCollection(userId, {
-    page: 1,
-    limit: 200,
-    sort: "value_desc"
-  });
-  const value = cards.reduce((sum, c) => sum + c.currentPrice, 0);
-  return { value, cardCount: total };
+  const summary = await serverApiClient.getCollectionPortfolioSummary(userId);
+  return { value: summary.totalValueCents, cardCount: summary.cardCount };
 }
 
 /* ============================================================================

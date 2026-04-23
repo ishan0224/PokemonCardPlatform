@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiClient, mapApiErrorToMessage, type Auction } from "@/lib/api-client";
 import { createApiKey, useApiSWRInfinite } from "@/lib/swr";
+import { isSocketConnected, onSocketConnectivityChange } from "@/lib/socket-client";
 import { useAuctionsRoom } from "./use-socket";
 
 type AuctionsPage = {
@@ -130,7 +131,16 @@ export function useAuctions(input: UseAuctionsInput = {}): UseAuctionsState {
     }
   });
 
+  // Poll only when the socket is disconnected — socket events cover the connected case
+  const [socketUp, setSocketUp] = useState(isSocketConnected);
+
   useEffect(() => {
+    return onSocketConnectivityChange(setSocketUp);
+  }, []);
+
+  useEffect(() => {
+    if (socketUp) return;
+
     const timer = setInterval(() => {
       if (document.visibilityState === "hidden") {
         return;
@@ -142,7 +152,7 @@ export function useAuctions(input: UseAuctionsInput = {}): UseAuctionsState {
     return () => {
       clearInterval(timer);
     };
-  }, [mutate]);
+  }, [mutate, socketUp]);
 
   return {
     auctions,

@@ -1,5 +1,6 @@
 import { loadEnvConfig } from "@next/env";
 import http from "http";
+import compression from "compression";
 import express from "express";
 import next from "next";
 
@@ -201,6 +202,14 @@ async function bootstrap(): Promise<void> {
       nextMiddleware();
     }
   });
+
+  app.use(compression({
+    filter: (req, res) => {
+      // Skip socket.io — it has its own compression
+      if (req.url?.startsWith("/socket.io")) return false;
+      return compression.filter(req, res);
+    }
+  }));
 
   app.get("/healthz", (_req, res) => {
     res.status(200).json({ status: "ok" });

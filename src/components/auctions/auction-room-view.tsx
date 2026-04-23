@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuction } from "@/hooks/use-auction";
 import { useAuth } from "@/hooks/use-auth";
 import { Button, buttonClassName } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { CardImage } from "@/components/ui/card-image";
 import { Chip } from "@/components/ui/chip";
 import { CountdownPill } from "@/components/ui/countdown-pill";
 import { RarityBadge } from "@/components/ui/rarity-badge";
-import { ApiClientError } from "@/lib/api-client";
+import { ApiClientError, type AuctionDetail } from "@/lib/api-client";
 import { formatDollarsInputFromCents, formatMoneyCents, parseDollarsInputToCents } from "@/lib/format";
 import { routes } from "@/lib/routes";
 
@@ -87,7 +87,7 @@ function computeAdvisoryFinalWindow(input: {
   };
 }
 
-export function AuctionRoomView({ auctionId }: { auctionId: string }): JSX.Element {
+export function AuctionRoomView({ auctionId, initialAuction }: { auctionId: string; initialAuction?: AuctionDetail }): JSX.Element {
   const router = useRouter();
   const { user } = useAuth();
   const {
@@ -99,15 +99,24 @@ export function AuctionRoomView({ auctionId }: { auctionId: string }): JSX.Eleme
     watcherCount,
     refresh,
     placeBid
-  } = useAuction(auctionId, true);
+  } = useAuction(auctionId, true, initialAuction);
   const [bidInput, setBidInput] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
+  const [showEndedOverlay, setShowEndedOverlay] = useState(false);
+  const prevStatusRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!auction) return;
     setBidInput(formatDollarsInputFromCents(auction.minNextBid));
   }, [auction?.id, auction?.minNextBid]);
+
+  useEffect(() => {
+    if (auction?.status === "completed" && prevStatusRef.current === "active") {
+      setShowEndedOverlay(true);
+    }
+    prevStatusRef.current = auction?.status ?? null;
+  }, [auction?.status]);
 
   const canBid = Boolean(
     user &&
@@ -288,13 +297,13 @@ export function AuctionRoomView({ auctionId }: { auctionId: string }): JSX.Eleme
                 <RarityBadge rarity={auction.card.pokemonCard.rarityTier} />
               </div>
 
-              <div className="mt-4 grid gap-5 sm:grid-cols-[220px_1fr]">
+              <div className="mt-4 grid gap-5 sm:grid-cols-[240px_1fr]">
                 <div className="flex justify-center sm:justify-start">
                   <CardImage
                     src={auction.card.pokemonCard.imageUrl}
                     hiresSrc={auction.card.pokemonCard.imageUrlHires}
                     alt={auction.card.pokemonCard.name}
-                    size="md"
+                    size="lg"
                     rarityTier={auction.card.rarityTier}
                   />
                 </div>
@@ -477,25 +486,6 @@ export function AuctionRoomView({ auctionId }: { auctionId: string }): JSX.Eleme
               </div>
             </article>
 
-            {/* SOFT-CLOSE NOTICE */}
-            <div className="rounded-pv-lg border border-pv-info/28 bg-[rgba(56,189,248,0.04)] px-[14px] py-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[12px] font-extrabold text-pv-info">Anti-snipe</span>
-                  <span className="text-[12px] text-pv-muted">
-                    Bids in the last 30s extend the timer by 30s. Final-window confirmations apply in
-                    the endgame.
-                  </span>
-                </div>
-                <span className="text-[12px] text-pv-muted">
-                  Extensions so far: {extensions}
-                  {advisoryFinalWindow.inFinalWindow && advisoryFinalWindow.windowStartedAt
-                    ? ` · final window since ${formatRelative(advisoryFinalWindow.windowStartedAt)}`
-                    : ""}
-                </span>
-              </div>
-            </div>
-
             {/* WINNER BANNER */}
             {isWinner ? (
               <div className="rounded-pv-lg border border-pv-good/30 bg-[rgba(16,185,129,0.06)] p-5">
@@ -534,7 +524,7 @@ export function AuctionRoomView({ auctionId }: { auctionId: string }): JSX.Eleme
                   Streaming
                 </span>
               </div>
-              <ul className="px-[14px] py-2">
+              <ul className="max-h-[280px] overflow-y-auto px-[14px] py-2">
                 {auction.bids.length === 0 ? (
                   <li className="px-1 py-3 text-[12px] text-pv-muted">
                     No bids yet. Opening bid {formatMoneyCents(auction.startingBid)}.
@@ -597,6 +587,61 @@ export function AuctionRoomView({ auctionId }: { auctionId: string }): JSX.Eleme
                   ✓ Verify via owner
                 </Link>
               </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* AUCTION ENDED OVERLAY */}
+      {showEndedOverlay && auction?.status === "completed" ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setShowEndedOverlay(false)}
+          role="dialog"
+          aria-label="Auction result"
+        >
+          <div
+            className="mx-4 w-full max-w-md rounded-pv-xl border border-pv-line bg-pv-surface-2 p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-center">
+              <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-pv-gold">Auction closed</p>
+              <h2 className="mt-2 text-pv-h1">{auction.card.pokemonCard.name}</h2>
+            </div>
+            <div className="mt-4 flex justify-center">
+              <CardImage
+                src={auction.card.pokemonCard.imageUrl}
+                hiresSrc={auction.card.pokemonCard.imageUrlHires}
+                alt={auction.card.pokemonCard.name}
+                size="lg"
+                rarityTier={auction.card.rarityTier}
+              />
+            </div>
+            <div className="mt-4 space-y-2 text-center">
+              {auction.currentBidderUsername ? (
+                <>
+                  <p className="text-[13px] text-pv-muted">Winning bidder</p>
+                  <p className="text-[20px] font-extrabold text-pv-text">@{auction.currentBidderUsername}</p>
+                  <p className="text-[16px] font-extrabold tabular-nums text-pv-gold">
+                    {formatMoneyCents(auction.currentBid ?? auction.startingBid)}
+                  </p>
+                  {isWinner ? (
+                    <p className="mt-1 text-[13px] font-bold text-pv-good">You won this auction!</p>
+                  ) : null}
+                </>
+              ) : (
+                <p className="text-[14px] font-bold text-pv-muted">No bids were placed</p>
+              )}
+            </div>
+            <div className="mt-5">
+              <Button
+                type="button"
+                variant="primary"
+                fullWidth
+                onClick={() => setShowEndedOverlay(false)}
+              >
+                {isWinner ? "View in collection" : "Close"}
+              </Button>
             </div>
           </div>
         </div>

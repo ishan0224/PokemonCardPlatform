@@ -1,4 +1,5 @@
-export const dynamic = "force-dynamic";
+// Public, user-agnostic listing — short cache; socket events cover real-time freshness
+export const revalidate = 10;
 
 import { type NextRequest, NextResponse } from "next/server";
 import { handleRouteError } from "@/server/http/api";
