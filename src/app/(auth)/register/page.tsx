@@ -9,7 +9,6 @@ import { routes } from "@/lib/routes";
 import { useAuth } from "@/hooks/use-auth";
 
 const USERNAME_HELP_ID = "register-username-help";
-const REGISTER_SOCIAL_HELP_ID = "register-social-help";
 
 export default function RegisterPage(): JSX.Element {
   const router = useRouter();
@@ -62,22 +61,6 @@ export default function RegisterPage(): JSX.Element {
       footerText="Already have an account?"
       footerLinkLabel="Sign in"
       footerLinkHref={routes.auth.login}
-      auxiliaryContent={
-        <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-pv-muted">Social sign-in</p>
-          <p id={REGISTER_SOCIAL_HELP_ID} className="text-xs text-pv-muted">
-            Coming soon.
-          </p>
-          <div className="grid grid-cols-2 gap-2" aria-describedby={REGISTER_SOCIAL_HELP_ID}>
-            <Button type="button" variant="secondary" fullWidth disabled title="coming soon">
-              Google
-            </Button>
-            <Button type="button" variant="secondary" fullWidth disabled title="coming soon">
-              Apple
-            </Button>
-          </div>
-        </div>
-      }
     >
       <form className="space-y-3" onSubmit={(event) => void onSubmit(event)}>
         <div>
