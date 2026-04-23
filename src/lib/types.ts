@@ -18,7 +18,7 @@ export type DropStatus = "upcoming" | "active" | "completed" | "cancelled";
 export type CardState = "in_pack" | "owned" | "listed" | "in_auction";
 export type ListingStatus = "active" | "sold" | "cancelled";
 export type AuctionStatus = "active" | "completed" | "cancelled";
-export type AuctionDurationType = "1h" | "6h" | "24h";
+export type AuctionDurationType = "1h" | "6h" | "24h" | "custom";
 export type HoldStatus = "active" | "released" | "captured";
 export type CollectionCardTransactionType =
   | "pack_purchase"

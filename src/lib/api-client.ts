@@ -852,6 +852,7 @@ export const apiClient = {
       cardId: string;
       startingBid: number;
       durationType: AuctionDurationType;
+      durationMinutes?: number;
     },
     signal?: AbortSignal
   ): Promise<{ auction: AuctionDetail }> {

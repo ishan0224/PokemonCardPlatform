@@ -9,6 +9,7 @@ import { buttonClassName } from "@/components/ui/button-styles";
 import { formatDateTime, formatMoneyCents } from "@/lib/format";
 import { routes } from "@/lib/routes";
 import type { Auction } from "@/lib/api-client";
+import { usePrefetchOnHover } from "@/hooks/use-prefetch-on-hover";
 
 type AuctionListingCardProps = {
   auction: Auction;
@@ -25,6 +26,7 @@ function resolveRole(auction: Auction, uid: string | null): "owner" | "leading" 
 export function AuctionListingCard({ auction, currentUserId }: AuctionListingCardProps): JSX.Element {
   const role = resolveRole(auction, currentUserId);
   const isChase = auction.card.pokemonCard.rarityTier === "chase";
+  const { onMouseEnter } = usePrefetchOnHover(routes.auctions.detail(auction.id));
 
   const cta =
     role === "owner" ? "Manage auction" : role === "leading" ? "View your bid" : "Enter room";
@@ -102,14 +104,16 @@ export function AuctionListingCard({ auction, currentUserId }: AuctionListingCar
   );
 
   return (
-    <CardShell
-      header={header}
-      media={media}
-      body={body}
-      actions={actions}
-      variant="surface"
-      tone={isChase ? "rarity-chase" : "default"}
-      className="min-h-[580px]"
-    />
+    <div onMouseEnter={onMouseEnter}>
+      <CardShell
+        header={header}
+        media={media}
+        body={body}
+        actions={actions}
+        variant="surface"
+        tone={isChase ? "rarity-chase" : "default"}
+        className=""
+      />
+    </div>
   );
 }

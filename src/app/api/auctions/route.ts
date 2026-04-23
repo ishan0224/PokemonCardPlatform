@@ -11,9 +11,10 @@ type CreateAuctionBody = {
   cardId: string;
   startingBid: number;
   durationType: AuctionDurationType;
+  durationMinutes?: number;
 };
 
-const VALID_DURATION_TYPES: readonly AuctionDurationType[] = ["1h", "6h", "24h"];
+const VALID_DURATION_TYPES: readonly AuctionDurationType[] = ["1h", "6h", "24h", "custom"];
 
 function parseOptionalNumber(value: string | null, fallback: number): number {
   if (!value) {
@@ -28,6 +29,7 @@ function validateCreateBody(payload: CreateAuctionBody): {
   cardId: string;
   startingBid: number;
   durationType: AuctionDurationType;
+  durationMinutes?: number;
 } {
   if (!payload || typeof payload !== "object") {
     throw new ApiRouteError("Body is required.", 400, "INVALID_BODY");
@@ -46,7 +48,15 @@ function validateCreateBody(payload: CreateAuctionBody): {
   }
 
   if (!VALID_DURATION_TYPES.includes(durationType)) {
-    throw new ApiRouteError("Duration type must be one of: 1h, 6h, 24h.", 400, "INVALID_AUCTION_DURATION");
+    throw new ApiRouteError("Duration type must be one of: 1h, 6h, 24h, custom.", 400, "INVALID_AUCTION_DURATION");
+  }
+
+  if (durationType === "custom") {
+    const durationMinutes = Number(payload.durationMinutes);
+    if (!Number.isFinite(durationMinutes) || durationMinutes < 5 || durationMinutes > 1440) {
+      throw new ApiRouteError("Custom duration must be between 5 and 1440 minutes.", 400, "INVALID_AUCTION_DURATION");
+    }
+    return { cardId, startingBid: Math.trunc(startingBid), durationType, durationMinutes: Math.trunc(durationMinutes) };
   }
 
   return {
@@ -75,7 +85,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       sellerId: authUser.userId,
       cardId: body.cardId,
       startingBid: body.startingBid,
-      durationType: body.durationType
+      durationType: body.durationType,
+      durationMinutes: body.durationMinutes
     });
 
     return NextResponse.json(result, { status: 201 });

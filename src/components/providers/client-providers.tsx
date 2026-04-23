@@ -14,7 +14,7 @@ export function ClientProviders({ children, initialSession = null }: ClientProvi
   return (
     <SWRConfig
       value={{
-        revalidateOnFocus: true,
+        revalidateOnFocus: false,
         refreshInterval: 0,
         shouldRetryOnError: false,
         keepPreviousData: true

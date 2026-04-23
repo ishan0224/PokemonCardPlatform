@@ -27,6 +27,7 @@ type CreateAuctionInput = {
   card: CollectionCard;
   startingBid: number;
   durationType: AuctionDurationType;
+  durationMinutes?: number;
 };
 
 type UseCreateAuctionState = {
@@ -39,7 +40,7 @@ type UseCreateAuctionState = {
 const COLLECTION_LIST_RESOURCE = "collection:list";
 const AUCTIONS_LIST_RESOURCE = "auctions:list:infinite";
 
-const DURATION_MS: Record<AuctionDurationType, number> = {
+const DURATION_MS: Record<string, number> = {
   "1h": 60 * 60 * 1000,
   "6h": 6 * 60 * 60 * 1000,
   "24h": 24 * 60 * 60 * 1000
@@ -75,10 +76,14 @@ function buildOptimisticAuction(input: {
   sellerUsername: string;
   startingBid: number;
   durationType: AuctionDurationType;
+  durationMinutes?: number;
   optimisticId: string;
 }): Auction {
   const createdAt = new Date();
-  const endsAt = new Date(createdAt.getTime() + DURATION_MS[input.durationType]).toISOString();
+  const durationMs = input.durationType === "custom" && input.durationMinutes
+    ? input.durationMinutes * 60 * 1000
+    : (DURATION_MS[input.durationType] ?? 60 * 60 * 1000);
+  const endsAt = new Date(createdAt.getTime() + durationMs).toISOString();
 
   return {
     id: input.optimisticId,
@@ -377,6 +382,7 @@ export function useCreateAuction(): UseCreateAuctionState {
         sellerUsername: user.username,
         startingBid: input.startingBid,
         durationType: input.durationType,
+        durationMinutes: input.durationMinutes,
         optimisticId
       });
 
@@ -397,7 +403,8 @@ export function useCreateAuction(): UseCreateAuctionState {
         const result = await apiClient.createAuction({
           cardId: input.card.id,
           startingBid: input.startingBid,
-          durationType: input.durationType
+          durationType: input.durationType,
+          durationMinutes: input.durationMinutes
         });
 
         const createdAuction = mapAuctionDetailToAuction(result.auction);

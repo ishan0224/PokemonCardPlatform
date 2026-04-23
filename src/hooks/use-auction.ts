@@ -27,10 +27,10 @@ type UseAuctionState = {
   ) => Promise<PlaceBidOutcome>;
 };
 
-export function useAuction(auctionId: string, enableRealtime = true): UseAuctionState {
+export function useAuction(auctionId: string, enableRealtime = true, initialAuction?: AuctionDetail): UseAuctionState {
   const { user, refreshAuth } = useAuth();
-  const [auction, setAuction] = useState<AuctionDetail | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [auction, setAuction] = useState<AuctionDetail | null>(initialAuction ?? null);
+  const [loading, setLoading] = useState(!initialAuction);
   const [error, setError] = useState<string | null>(null);
   const [bidPending, setBidPending] = useState(false);
   const [watcherCount, setWatcherCount] = useState(0);

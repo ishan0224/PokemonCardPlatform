@@ -51,7 +51,7 @@ const DROP_PACK_IMAGE_BY_TIER_SET: Record<string, ImageMeta> = {
 };
 
 const FALLBACK_META: ImageMeta = {
-  path: "/card-back.svg",
+  path: "/card-back.png",
   width: 160,
   height: 224
 };

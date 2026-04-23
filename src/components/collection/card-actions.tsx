@@ -20,6 +20,7 @@ type CardActionsProps = {
     card: CollectionCard;
     startingBid: number;
     durationType: AuctionDurationType;
+    durationMinutes?: number;
   }) => Promise<string>;
   showViewDetailsLink?: boolean;
   viewDetailsHref?: string;
@@ -30,7 +31,8 @@ type InlineForm = "none" | "list" | "auction";
 const DURATION_OPTIONS: Array<{ value: AuctionDurationType; label: string }> = [
   { value: "1h", label: "1h" },
   { value: "6h", label: "6h" },
-  { value: "24h", label: "24h" }
+  { value: "24h", label: "24h" },
+  { value: "custom", label: "Custom" }
 ];
 
 const MIN_LISTING_CENTS = 50;
@@ -56,6 +58,8 @@ export function CardActions({
     formatDollarsInputFromCents(Math.max(card.currentPrice, MIN_STARTING_BID_CENTS))
   );
   const [durationType, setDurationType] = useState<AuctionDurationType>("1h");
+  const [customHours, setCustomHours] = useState("0");
+  const [customMinutes, setCustomMinutes] = useState("30");
   const [localError, setLocalError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -93,9 +97,19 @@ export function CardActions({
       setLocalError("Starting bid must be at least $0.50.");
       return;
     }
+    let durationMinutes: number | undefined;
+    if (durationType === "custom") {
+      const h = Number(customHours) || 0;
+      const m = Number(customMinutes) || 0;
+      durationMinutes = h * 60 + m;
+      if (durationMinutes < 5 || durationMinutes > 1440) {
+        setLocalError("Custom duration must be between 5 minutes and 24 hours.");
+        return;
+      }
+    }
     setLocalError(null);
     try {
-      const auctionId = await onStartAuction({ card, startingBid: parsed, durationType });
+      const auctionId = await onStartAuction({ card, startingBid: parsed, durationType, durationMinutes });
       setInlineForm("none");
       router.push(routes.auctions.detail(auctionId));
     } catch (caughtError) {
@@ -163,13 +177,13 @@ export function CardActions({
                 setPriceInput(event.target.value);
                 if (localError) setLocalError(null);
               }}
-              className="min-h-10 basis-3/4 rounded-[10px] border border-pv-line bg-pv-surface-3 px-3 py-2 text-[13px] font-semibold text-pv-text outline-none transition focus:border-pv-line-strong focus:ring-[3px] focus:ring-pv-gold/10"
+              className="min-h-10 min-w-0 flex-1 rounded-[10px] border border-pv-line bg-pv-surface-3 px-3 py-2 text-[13px] font-semibold text-pv-text outline-none transition focus:border-pv-line-strong focus:ring-[3px] focus:ring-pv-gold/10"
             />
             <Button
               type="button"
               variant="primary"
               size="md"
-              className="basis-1/4"
+              className="flex-1"
               loading={listingPending}
               onClick={() => void onSubmitListing()}
             >
@@ -215,6 +229,32 @@ export function CardActions({
               );
             })}
           </div>
+          {durationType === "custom" ? (
+            <div className="flex items-center gap-1.5">
+              <div className="flex min-w-0 flex-1 items-center gap-1">
+                <input
+                  type="number"
+                  min={0}
+                  max={24}
+                  value={customHours}
+                  onChange={(e) => setCustomHours(e.target.value)}
+                  className="min-h-9 w-full rounded-[10px] border border-pv-line bg-pv-surface-3 px-2 py-1.5 text-center text-[13px] font-semibold text-pv-text outline-none focus:border-pv-line-strong"
+                />
+                <span className="text-[11px] text-pv-muted">h</span>
+              </div>
+              <div className="flex min-w-0 flex-1 items-center gap-1">
+                <input
+                  type="number"
+                  min={0}
+                  max={59}
+                  value={customMinutes}
+                  onChange={(e) => setCustomMinutes(e.target.value)}
+                  className="min-h-9 w-full rounded-[10px] border border-pv-line bg-pv-surface-3 px-2 py-1.5 text-center text-[13px] font-semibold text-pv-text outline-none focus:border-pv-line-strong"
+                />
+                <span className="text-[11px] text-pv-muted">m</span>
+              </div>
+            </div>
+          ) : null}
           <label
             htmlFor={`auction-bid-${card.id}`}
             className="text-[10px] font-bold uppercase tracking-[0.08em] text-pv-muted-2"
@@ -232,13 +272,13 @@ export function CardActions({
                 setBidInput(event.target.value);
                 if (localError) setLocalError(null);
               }}
-              className="min-h-10 basis-3/4 rounded-[10px] border border-pv-line bg-pv-surface-3 px-3 py-2 text-[13px] font-semibold text-pv-text outline-none transition focus:border-pv-line-strong focus:ring-[3px] focus:ring-pv-gold/10"
+              className="min-h-10 min-w-0 flex-1 rounded-[10px] border border-pv-line bg-pv-surface-3 px-3 py-2 text-[13px] font-semibold text-pv-text outline-none transition focus:border-pv-line-strong focus:ring-[3px] focus:ring-pv-gold/10"
             />
             <Button
               type="button"
               variant="secondary"
               size="md"
-              className="basis-1/4"
+              className="flex-1"
               loading={auctionPending}
               onClick={() => void onSubmitAuction()}
             >

@@ -127,7 +127,7 @@ export function MarketplaceListingCard({
       actions={actions}
       variant="surface"
       tone={isChase ? "rarity-chase" : "default"}
-      className="min-h-[560px]"
+      className=""
     />
   );
 }

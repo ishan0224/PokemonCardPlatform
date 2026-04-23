@@ -196,7 +196,7 @@ type BalanceUpdatePayload = {
   referenceId?: string;
 };
 
-const DURATION_SECONDS: Record<AuctionDurationType, number> = {
+const DURATION_SECONDS: Record<string, number> = {
   "1h": 60 * 60,
   "6h": 6 * 60 * 60,
   "24h": 24 * 60 * 60
@@ -665,12 +665,15 @@ export async function createAuction(input: {
   cardId: string;
   startingBid: number;
   durationType: AuctionDurationType;
+  durationMinutes?: number;
 }): Promise<CreateAuctionResult> {
   const startingBid = Math.trunc(input.startingBid);
-  const durationSeconds = DURATION_SECONDS[input.durationType];
+  const durationSeconds = input.durationType === "custom" && input.durationMinutes
+    ? input.durationMinutes * 60
+    : DURATION_SECONDS[input.durationType];
 
-  if (!durationSeconds) {
-    throw new AuctionServiceError("Auction duration type is invalid.", 400, "INVALID_AUCTION_DURATION");
+  if (!durationSeconds || durationSeconds < 300 || durationSeconds > 86400) {
+    throw new AuctionServiceError("Auction duration must be between 5 minutes and 24 hours.", 400, "INVALID_AUCTION_DURATION");
   }
 
   if (!Number.isFinite(startingBid) || startingBid < MIN_AUCTION_START_BID_CENTS) {
@@ -822,6 +825,20 @@ export async function placeBid(input: {
     if (FINAL_WINDOW_GATE_ENABLED) {
       finalWindowState = resolveFinalWindowState(auction, Date.now());
       if (finalWindowState.inFinalWindow) {
+        // Check confirmation before rate limit so the initial unconfirmed
+        // request doesn't consume a rate-limit token
+        if (input.confirmFinalWindowBid !== true) {
+          throw new AuctionServiceError(
+            "Final-window bid confirmation required.",
+            409,
+            "FINAL_WINDOW_CONFIRMATION_REQUIRED",
+            {
+              windowStartedAt: finalWindowState.windowStartedAt,
+              effectiveEndsAt: finalWindowState.effectiveEndsAt
+            }
+          );
+        }
+
         try {
           await enforceRateLimit({
             key: `bid:auction:${input.auctionId}:user:${input.bidderId}:finalWindow`,
@@ -838,18 +855,6 @@ export async function placeBid(input: {
             );
           }
           throw error;
-        }
-
-        if (input.confirmFinalWindowBid !== true) {
-          throw new AuctionServiceError(
-            "Final-window bid confirmation required.",
-            409,
-            "FINAL_WINDOW_CONFIRMATION_REQUIRED",
-            {
-              windowStartedAt: finalWindowState.windowStartedAt,
-              effectiveEndsAt: finalWindowState.effectiveEndsAt
-            }
-          );
         }
       }
     }

@@ -163,13 +163,32 @@ function getSocket(): Socket {
   if (!socketInstance) {
     socketInstance = io(getSocketUrl(), {
       withCredentials: true,
-      transports: ["websocket"],
+      transports: ["websocket", "polling"],
       autoConnect: false,
-      reconnection: true
+      reconnection: true,
+      reconnectionDelay: 300,
+      reconnectionDelayMax: 3000,
+      reconnectionAttempts: Infinity
     });
   }
 
   return socketInstance;
+}
+
+export function isSocketConnected(): boolean {
+  return socketInstance?.connected ?? false;
+}
+
+export function onSocketConnectivityChange(callback: (connected: boolean) => void): () => void {
+  const socket = getSocket();
+  const onConnect = (): void => callback(true);
+  const onDisconnect = (): void => callback(false);
+  socket.on("connect", onConnect);
+  socket.on("disconnect", onDisconnect);
+  return () => {
+    socket.off("connect", onConnect);
+    socket.off("disconnect", onDisconnect);
+  };
 }
 
 export function subscribeToDropRoom(dropId: string, handlers: DropRoomHandlers): () => void {

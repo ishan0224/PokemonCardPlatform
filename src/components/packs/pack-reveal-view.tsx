@@ -58,6 +58,8 @@ export function PackRevealView({ packId }: { packId: string }): JSX.Element {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
   const [packBurstActive, setPackBurstActive] = useState(false);
+  const [showSummaryOverlay, setShowSummaryOverlay] = useState(false);
+  const prevAllRevealedRef = useRef(false);
   const burstTimerRef = useRef<number | null>(null);
   const {
     pack,
@@ -90,7 +92,15 @@ export function PackRevealView({ packId }: { packId: string }): JSX.Element {
   const peak = peakRarity(revealedCards);
 
   useEffect(() => {
+    if (allRevealed && !prevAllRevealedRef.current) {
+      setShowSummaryOverlay(true);
+    }
+    prevAllRevealedRef.current = allRevealed;
+  }, [allRevealed]);
+
+  useEffect(() => {
     setPackBurstActive(false);
+    setShowSummaryOverlay(false);
   }, [packId]);
 
   useEffect(() => {
@@ -339,6 +349,68 @@ export function PackRevealView({ packId }: { packId: string }): JSX.Element {
                 </div>
               }
             />
+          ) : null}
+
+          {/* PACK SUMMARY OVERLAY */}
+          {showSummaryOverlay && allRevealed ? (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+              onClick={() => setShowSummaryOverlay(false)}
+              role="dialog"
+              aria-label="Pack summary"
+            >
+              <div
+                className="mx-4 max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-pv-xl border border-pv-line bg-pv-surface-2 p-6 shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="text-center">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-pv-gold">Pack opened</p>
+                  <h2 className="mt-1 text-pv-h1">Your cards</h2>
+                  <p className="mt-1 text-[13px] text-pv-muted">
+                    Total market value: <span className="font-extrabold text-pv-text">{formatMoneyCents(totalPackMarketValue)}</span>
+                  </p>
+                </div>
+                <div className="mt-5 space-y-2.5">
+                  {revealedCards.map((rc) => (
+                    <div key={rc.slotNumber} className="flex items-center gap-3 rounded-pv-sm border border-pv-line bg-pv-surface-3 p-2.5">
+                      <CardImage
+                        src={rc.pokemonCard.imageUrl}
+                        hiresSrc={rc.pokemonCard.imageUrlHires}
+                        alt={rc.pokemonCard.name}
+                        size="sm"
+                        rarityTier={rc.rarityTier}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[13px] font-bold text-pv-text">{rc.pokemonCard.name}</p>
+                        <p className="mt-0.5 truncate text-[11px] text-pv-muted">{rc.pokemonCard.setName}</p>
+                        <div className="mt-1 flex items-center gap-2">
+                          <RarityBadge rarity={rc.rarityTier} compact />
+                          <span className="text-[12px] font-extrabold tabular-nums text-pv-text">
+                            {formatMoneyCents(rc.pokemonCard.currentPrice)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-5 flex gap-2">
+                  <Link
+                    href={routes.collection.index}
+                    className={buttonClassName({ variant: "primary", fullWidth: true })}
+                  >
+                    View in collection
+                  </Link>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    fullWidth
+                    onClick={() => setShowSummaryOverlay(false)}
+                  >
+                    Close
+                  </Button>
+                </div>
+              </div>
+            </div>
           ) : null}
         </>
       ) : null}
