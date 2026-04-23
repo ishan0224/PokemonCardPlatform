@@ -11,9 +11,9 @@ import { routes } from "@/lib/routes";
 export async function AppShell({ children }: { children: ReactNode }): Promise<JSX.Element> {
   return (
     <div className="min-h-screen bg-pv-surface text-pv-text antialiased">
-      <div className="mx-auto flex w-full max-w-[1600px]">
+      <div className="flex w-full">
         <aside
-          className="sticky top-0 hidden h-screen w-60 border-r border-pv-line bg-[#08080b] md:block"
+          className="sticky top-0 hidden h-screen w-60 shrink-0 border-r border-pv-line bg-[#08080b] md:block"
           aria-label="Primary navigation"
         >
           <SidebarNav />
