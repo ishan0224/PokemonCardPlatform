@@ -6,7 +6,6 @@ export type NavItem = {
   id: string;
   label: string;
   href: string;
-  stub?: boolean;
 };
 
 export type NavSection = {

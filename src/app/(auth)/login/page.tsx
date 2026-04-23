@@ -9,7 +9,6 @@ import { routes } from "@/lib/routes";
 import { useAuth } from "@/hooks/use-auth";
 
 const EMAIL_HELP_ID = "login-email-help";
-const LOGIN_SOCIAL_HELP_ID = "login-social-help";
 
 export default function LoginPage(): JSX.Element {
   const router = useRouter();
@@ -54,22 +53,6 @@ export default function LoginPage(): JSX.Element {
       footerText="No account yet?"
       footerLinkLabel="Create one"
       footerLinkHref={routes.auth.register}
-      auxiliaryContent={
-        <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-pv-muted">Social sign-in</p>
-          <p id={LOGIN_SOCIAL_HELP_ID} className="text-xs text-pv-muted">
-            Coming soon.
-          </p>
-          <div className="grid grid-cols-2 gap-2" aria-describedby={LOGIN_SOCIAL_HELP_ID}>
-            <Button type="button" variant="secondary" fullWidth disabled title="coming soon">
-              Google
-            </Button>
-            <Button type="button" variant="secondary" fullWidth disabled title="coming soon">
-              Apple
-            </Button>
-          </div>
-        </div>
-      }
     >
       <form className="space-y-3" onSubmit={(event) => void onSubmit(event)}>
         <div>

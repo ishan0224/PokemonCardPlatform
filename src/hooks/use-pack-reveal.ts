@@ -4,6 +4,41 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiClientError, apiClient, mapApiErrorToMessage, type PackCard, type PackDetail } from "@/lib/api-client";
 import { useRef } from "react";
 
+// Light preload — warm the browser cache for each card image as soon as we
+// know the URLs (after openPack or when revisiting an already-opened pack).
+// This eats the /_next/image proxy + Sharp + Pokemon-CDN round-trip in the
+// background while the user is still admiring the sealed pack, so per-slot
+// reveal renders the image instantly. Pure client-side cache warmup; no API
+// contract change, no server-side change, no React state mutation.
+//
+// Width 384 matches the next/image srcset entry that retina mobile browsers
+// pick for a 160 CSS px (size="md") card. Other widths still benefit from a
+// warm Sharp cache (raw-source fetch is the slow part) and a warm Pokemon CDN
+// edge connection.
+type PreloadableCard = {
+  pokemonCard: {
+    imageUrl: string | null;
+    imageUrlHires: string | null;
+  };
+};
+
+function preloadCardImages(cards: ReadonlyArray<PreloadableCard> | null | undefined): void {
+  if (typeof window === "undefined" || !cards) {
+    return;
+  }
+
+  for (const card of cards) {
+    const rawUrl = card.pokemonCard.imageUrlHires ?? card.pokemonCard.imageUrl;
+    if (!rawUrl) {
+      continue;
+    }
+    const proxied = `/_next/image?url=${encodeURIComponent(rawUrl)}&w=384&q=75`;
+    const img = new Image();
+    img.decoding = "async";
+    img.src = proxied;
+  }
+}
+
 type UsePackRevealState = {
   pack: PackDetail | null;
   loading: boolean;
@@ -54,6 +89,7 @@ export function usePackReveal(packId: string): UsePackRevealState {
         // Keep reveal pacing client-driven even after reload/navigation.
         setSlotOrder(result.pack.cards.map((card) => card.slotNumber));
         setRevealedCardsBySlot({});
+        preloadCardImages(result.pack.cards);
       } else {
         setSlotOrder([]);
         setRevealedCardsBySlot({});
@@ -91,6 +127,7 @@ export function usePackReveal(packId: string): UsePackRevealState {
           // Keep reveal pacing client-driven even after reload/navigation.
           setSlotOrder(result.pack.cards.map((card) => card.slotNumber));
           setRevealedCardsBySlot({});
+          preloadCardImages(result.pack.cards);
         } else {
           setSlotOrder([]);
           setRevealedCardsBySlot({});
@@ -133,6 +170,10 @@ export function usePackReveal(packId: string): UsePackRevealState {
       }
       setSlotOrder(result.pack.cards.map((slot) => slot.slotNumber));
       setRevealedCardsBySlot({});
+      // Note: openPack response only carries { slotNumber, revealed } per slot
+      // — no image URLs — so we can't preload here. URLs become known per-slot
+      // via revealPackCard. Preload still helps the revisit/refresh paths
+      // (getPack returns full card data when the pack is already opened).
       setPack((previous) => {
         if (!previous) {
           return previous;

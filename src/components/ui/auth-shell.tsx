@@ -9,7 +9,6 @@ type AuthShellProps = {
   footerLinkLabel: string;
   footerLinkHref: string;
   children: ReactNode;
-  auxiliaryContent?: ReactNode;
 };
 
 export function AuthShell({
@@ -18,8 +17,7 @@ export function AuthShell({
   footerText,
   footerLinkLabel,
   footerLinkHref,
-  children,
-  auxiliaryContent
+  children
 }: AuthShellProps): JSX.Element {
   return (
     <section className="w-full max-w-md rounded-pv-xl border border-pv-line bg-pv-surface-2 p-6 shadow-[0_30px_70px_-40px_rgba(0,0,0,0.8)] sm:p-7">
@@ -36,9 +34,6 @@ export function AuthShell({
         </Link>
       </p>
       <LegalLinks compact className="mt-4 border-t border-pv-line pt-3" />
-      {auxiliaryContent ? (
-        <div className="mt-5 border-t border-pv-line pt-3">{auxiliaryContent}</div>
-      ) : null}
     </section>
   );
 }

@@ -29,6 +29,7 @@ export function SidebarNav({ mobile = false }: SidebarNavProps): JSX.Element {
     } finally {
       clearAuth();
       router.push(routes.auth.login);
+      router.refresh();
     }
   };
 
@@ -70,11 +71,6 @@ export function SidebarNav({ mobile = false }: SidebarNavProps): JSX.Element {
                       className="group flex min-h-11 items-center gap-2.5 rounded-[10px] px-3 py-[9px] text-[13px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pv-gold focus-visible:ring-offset-2 focus-visible:ring-offset-[#08080b] data-[active=true]:bg-pv-gold-soft data-[active=true]:text-pv-gold data-[active=true]:shadow-[inset_0_0_0_1px_rgba(255,234,155,0.18)] data-[active=false]:text-pv-muted data-[active=false]:hover:bg-pv-surface-2 data-[active=false]:hover:text-pv-text"
                     >
                       <span className="flex-1">{item.label}</span>
-                      {item.stub ? (
-                        <span className="rounded-full bg-pv-surface-3 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-pv-muted group-data-[active=true]:bg-white/15 group-data-[active=true]:text-pv-gold">
-                          Soon
-                        </span>
-                      ) : null}
                     </Link>
                   </li>
                 );

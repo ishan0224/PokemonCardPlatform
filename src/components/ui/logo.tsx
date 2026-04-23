@@ -1,5 +1,3 @@
-import Image from "next/image";
-
 type LogoProps = {
   height?: number;
   priority?: boolean;
@@ -16,16 +14,23 @@ export function Logo({
   className
 }: LogoProps): JSX.Element {
   const width = Math.round(height * ASPECT_RATIO);
+  const loading = priority ? "eager" : "lazy";
+  const fetchPriority = priority ? "high" : "auto";
 
   return (
-    <Image
-      src="/images/Logo.png"
-      alt="PullVault"
-      width={width}
-      height={height}
-      priority={priority}
-      className={className}
-      sizes={`${width}px`}
-    />
+    <picture>
+      <source srcSet="/images/Logo.avif" type="image/avif" />
+      <source srcSet="/images/Logo.webp" type="image/webp" />
+      <img
+        src="/images/Logo.png"
+        alt="PullVault"
+        width={width}
+        height={height}
+        loading={loading}
+        decoding="async"
+        fetchPriority={fetchPriority}
+        className={className}
+      />
+    </picture>
   );
 }

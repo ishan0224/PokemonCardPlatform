@@ -30,6 +30,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <link rel="preconnect" href={process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""} crossOrigin="anonymous" />
         <link rel="dns-prefetch" href="https://images.pokemontcg.io" />
         <link rel="dns-prefetch" href={process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""} />
+        <link
+          rel="preload"
+          as="image"
+          href="/images/home-guest-hero.avif"
+          type="image/avif"
+          fetchPriority="high"
+        />
       </head>
       <body className="font-sans">
         <ClientProviders initialSession={session.user}>{children}</ClientProviders>

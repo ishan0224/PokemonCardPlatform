@@ -11,7 +11,7 @@ import {
   type AdminDropPreview,
   type AdminDropStatus
 } from "@/lib/api-client";
-import { formatDateTime, formatMoneyCents } from "@/lib/format";
+import { formatDateTime, formatMoneyCents, formatTierLabel } from "@/lib/format";
 import { routes } from "@/lib/routes";
 import { Button } from "@/components/ui/button";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
@@ -19,6 +19,37 @@ import type { PackTier, RarityTier } from "@/lib/types";
 
 const TIER_ORDER: PackTier[] = ["standard", "premium", "elite"];
 const RARITY_ORDER: RarityTier[] = ["common", "uncommon", "rare", "holo_rare", "ultra_rare", "chase"];
+
+const TIER_PACK_IMAGE_STEM: Record<PackTier, string> = {
+  standard: "/images/drop/StandardDropPackImage",
+  premium: "/images/drop/PremiumDropPackImage",
+  elite: "/images/drop/EliteDropPackImage"
+};
+
+function formatRarityLabel(rarity: RarityTier): string {
+  return rarity.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function TierPackThumbnail({ tier, size = 88 }: { tier: PackTier; size?: number }): JSX.Element {
+  const stem = TIER_PACK_IMAGE_STEM[tier];
+  const height = Math.round(size * (40 / 72));
+  return (
+    <picture>
+      <source srcSet={`${stem}.avif`} type="image/avif" />
+      <source srcSet={`${stem}.webp`} type="image/webp" />
+      <img
+        src={`${stem}.png`}
+        alt={`${formatTierLabel(tier)} pack`}
+        width={size}
+        height={height}
+        loading="lazy"
+        decoding="async"
+        className="shrink-0 rounded-pv-sm border border-pv-line bg-pv-surface-2 object-contain"
+        style={{ width: size, height }}
+      />
+    </picture>
+  );
+}
 
 type EditorTab = "schedule" | "composition";
 
@@ -550,10 +581,16 @@ export function AdminDropEditor({
 
               <div className="space-y-3">
                 {draft.tiers.map((tier) => (
-                  <section key={tier.tier} className="rounded-pv border border-pv-line bg-pv-surface-3 p-3">
-                    <p className="text-sm font-black text-pv-text">{tier.tier}</p>
-                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                      <label className="text-xs font-semibold text-pv-muted">
+                  <section
+                    key={tier.tier}
+                    className="grid gap-4 rounded-pv border border-pv-line bg-pv-surface-3 p-4 sm:grid-cols-2 sm:items-center"
+                  >
+                    <div className="flex justify-center sm:justify-start">
+                      <TierPackThumbnail tier={tier.tier} size={240} />
+                    </div>
+                    <div className="min-w-0 space-y-2">
+                      <p className="text-base font-black text-pv-text">{formatTierLabel(tier.tier)}</p>
+                      <label className="block text-xs font-semibold text-pv-muted">
                         Price (cents)
                         <input
                           type="number"
@@ -565,10 +602,10 @@ export function AdminDropEditor({
                               price: Math.max(50, Math.trunc(Number(event.target.value) || 50))
                             }))
                           }
-                          className="mt-1 w-full min-h-9 rounded-[10px] border border-pv-line bg-pv-surface-3 px-3 py-1.5 text-[13px] text-pv-text outline-none transition focus:border-pv-line-strong focus:ring-[3px] focus:ring-pv-gold/10"
+                          className="mt-1 w-full min-h-10 rounded-[10px] border border-pv-line bg-pv-surface-3 px-3 py-2 text-[13px] text-pv-text outline-none transition focus:border-pv-line-strong focus:ring-[3px] focus:ring-pv-gold/10"
                         />
                       </label>
-                      <label className="text-xs font-semibold text-pv-muted">
+                      <label className="block text-xs font-semibold text-pv-muted">
                         Total inventory
                         <input
                           type="number"
@@ -580,7 +617,7 @@ export function AdminDropEditor({
                               totalInventory: Math.max(1, Math.trunc(Number(event.target.value) || 1))
                             }))
                           }
-                          className="mt-1 w-full min-h-9 rounded-[10px] border border-pv-line bg-pv-surface-3 px-3 py-1.5 text-[13px] text-pv-text outline-none transition focus:border-pv-line-strong focus:ring-[3px] focus:ring-pv-gold/10"
+                          className="mt-1 w-full min-h-10 rounded-[10px] border border-pv-line bg-pv-surface-3 px-3 py-2 text-[13px] text-pv-text outline-none transition focus:border-pv-line-strong focus:ring-[3px] focus:ring-pv-gold/10"
                         />
                       </label>
                     </div>
@@ -596,20 +633,21 @@ export function AdminDropEditor({
                     key={tier}
                     type="button"
                     onClick={() => setActiveTier(tier)}
-                    className={`rounded-[7px] px-3 py-1.5 text-[12px] font-bold capitalize transition-colors ${
+                    className={`inline-flex items-center gap-1.5 rounded-[7px] px-3 py-1.5 text-[12px] font-bold transition-colors ${
                       activeTier === tier
                         ? "bg-pv-surface-4 text-pv-text"
                         : "text-pv-muted hover:text-pv-text"
                     }`}
                   >
-                    {tier}
+                    <TierPackThumbnail tier={tier} size={36} />
+                    {formatTierLabel(tier)}
                   </button>
                 ))}
               </div>
 
               <section className="space-y-2 rounded-pv border border-pv-line bg-pv-surface-3 p-3">
                 <p className="text-sm font-black text-pv-text">Set filter</p>
-                <p className="text-xs text-pv-muted">Choose sets for {activeTier}. Leave empty to include all sets.</p>
+                <p className="text-xs text-pv-muted">Choose sets for {formatTierLabel(activeTier)}. Leave empty to include all sets.</p>
                 <div className="max-h-44 space-y-1 overflow-auto pr-1">
                   {setItems.map((setItem) => {
                     const checked = activeTierInput.composition.setKeys.includes(setItem.setKey);
@@ -738,21 +776,21 @@ export function AdminDropEditor({
               const tierPreview = previewByTier[tier];
               return (
                 <section key={tier} className="rounded-pv border border-pv-line bg-pv-surface-3 p-3">
-                  <p className="text-sm font-bold text-pv-text">{tier}</p>
+                  <p className="text-lg font-black text-pv-text">{formatTierLabel(tier)}</p>
                   {tierPreview ? (
                     <>
                       <p className="mt-1 text-xs text-pv-muted">Cards/pack: {tierPreview.cardsPerPack}</p>
                       <div className="mt-2 space-y-1 text-xs text-pv-muted">
                         {tierPreview.slots.map((slot, index) => (
                           <p key={`${tier}-slot-${index + 1}`}>
-                            Slot {index + 1}: {slot.map((entry) => `${entry.rarity} ${(entry.weight * 100).toFixed(0)}%`).join(" · ")}
+                            Slot {index + 1}: {slot.map((entry) => `${formatRarityLabel(entry.rarity)} ${(entry.weight * 100).toFixed(0)}%`).join(" · ")}
                           </p>
                         ))}
                       </div>
                       <div className="mt-2 grid grid-cols-2 gap-1 text-xs text-pv-muted">
                         {RARITY_ORDER.map((rarity) => (
                           <p key={`${tier}-${rarity}`}>
-                            {rarity}: {tierPreview.eligibleCounts[rarity]}
+                            {formatRarityLabel(rarity)}: {tierPreview.eligibleCounts[rarity]}
                           </p>
                         ))}
                       </div>
@@ -761,7 +799,7 @@ export function AdminDropEditor({
                       </p>
                       {tierPreview.readiness.issues.map((issue) => (
                         <p key={`${tier}-${issue.rarity}`} className="text-xs text-pv-accent">
-                          {issue.rarity}: required {issue.required}, found {issue.actual}
+                          {formatRarityLabel(issue.rarity)}: required {issue.required}, found {issue.actual}
                         </p>
                       ))}
                     </>

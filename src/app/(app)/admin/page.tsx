@@ -34,10 +34,10 @@ export default function AdminLandingPage(): JSX.Element {
   return (
     <div className="space-y-6">
       <header>
-        <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-indigo-600">
+        <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-pv-gold">
           Admin · tools
         </p>
-        <h1 className="mt-1 text-3xl font-black tracking-tight text-slate-950">Admin</h1>
+        <h1 className="mt-1 text-pv-h1 text-pv-text">Admin</h1>
       </header>
 
       <section className="grid gap-4 md:grid-cols-2">
