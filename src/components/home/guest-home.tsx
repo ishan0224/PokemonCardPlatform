@@ -24,7 +24,7 @@ export async function GuestHome(): Promise<JSX.Element> {
 
   return (
     <div className="space-y-8">
-      <section className="relative aspect-[21/9] overflow-hidden rounded-3xl border border-pv-border bg-pv-ink text-white">
+      <section className="relative min-h-[520px] overflow-hidden rounded-3xl border border-pv-border bg-pv-ink text-white sm:aspect-[21/9] sm:min-h-0">
         <picture>
           <source srcSet="/images/home-guest-hero.avif" type="image/avif" />
           <source srcSet="/images/home-guest-hero.webp" type="image/webp" />
@@ -37,17 +37,17 @@ export async function GuestHome(): Promise<JSX.Element> {
             className="absolute inset-0 h-full w-full object-cover"
           />
         </picture>
-        <div className="relative p-6 sm:p-8 lg:p-10">
-          <p className="inline-flex rounded-full bg-white/20 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em]">
+        <div className="relative p-5 sm:p-8 lg:p-10">
+          <p className="inline-flex rounded-full bg-white/20 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] sm:text-xs">
             Live card drops
           </p>
-          <h1 className="mt-4 max-w-xl text-4xl font-black leading-tight sm:text-5xl">
+          <h1 className="mt-3 max-w-xl text-[28px] font-black leading-tight sm:mt-4 sm:text-5xl">
             Collect, reveal, and trade cards in real time.
           </h1>
-          <p className="mt-4 max-w-lg text-sm text-slate-200 sm:text-base">
+          <p className="mt-3 max-w-lg text-[13px] text-slate-200 sm:mt-4 sm:text-base">
             Join upcoming drops, secure packs before sellout, and reveal every slot with market-value feedback.
           </p>
-          <div className="mt-6 flex flex-wrap gap-3">
+          <div className="mt-5 flex flex-wrap gap-2 sm:mt-6 sm:gap-3">
             <Link href={routes.auth.register} className={buttonClassName({ variant: "primary" })}>
               Create account
             </Link>

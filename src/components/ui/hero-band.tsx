@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 type HeroBandProps = {
   children: ReactNode;
@@ -20,17 +20,18 @@ export function HeroBand({ children, preview, className, aspect = "21/8" }: Hero
   return (
     <div
       className={cx(
-        "relative flex items-end overflow-hidden rounded-pv-xl border border-pv-line p-7",
+        "relative flex items-end overflow-hidden rounded-pv-xl border border-pv-line p-5 sm:p-7",
+        "min-h-[380px] sm:min-h-0 sm:aspect-[var(--hero-aspect)]",
         className
       )}
       style={{
-        aspectRatio: aspect,
+        "--hero-aspect": aspect,
         backgroundImage: [
           "radial-gradient(80% 100% at 20% 60%, rgba(255,130,169,0.28), rgba(0,0,0,0) 55%)",
           "radial-gradient(80% 100% at 80% 40%, rgba(255,234,155,0.16), rgba(0,0,0,0) 55%)",
           "linear-gradient(120deg, #19111f 0%, #1a1327 55%, #261937 100%)"
         ].join(",")
-      }}
+      } as CSSProperties}
     >
       <div className="max-w-[520px]">{children}</div>
       {preview ? (

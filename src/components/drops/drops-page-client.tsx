@@ -63,13 +63,13 @@ function DropsHero({ drop }: { drop: Drop }): JSX.Element {
       <Chip tone={chipTone} pulse={isLive}>
         {isLive ? "Live now" : "Upcoming"}
       </Chip>
-      <h2 className="mt-2.5 text-pv-h1" style={{ fontSize: 36 }}>
+      <h2 className="mt-2.5 break-words text-[26px] font-black leading-tight sm:text-[36px]">
         Drop {drop.id.slice(0, 8)}
       </h2>
       <p className="mt-1.5 max-w-[500px] text-[13px] text-pv-muted">
         {drop.tiers.length} tier{drop.tiers.length === 1 ? "" : "s"} · provably fair
       </p>
-      <div className="mt-3.5 flex items-center gap-3">
+      <div className="mt-3.5 flex flex-wrap items-center gap-2 sm:gap-3">
         {!isLive ? <CountdownPill targetIso={drop.scheduledAt} /> : null}
         <Link
           href={routes.drops.detail(drop.id)}
